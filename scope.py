@@ -5,9 +5,7 @@ from streams import SerialStream
 
 class Scope(object):
 
-    def __init__(self, stream=None):
-        if stream is None:
-            stream = SerialStream()
+    def __init__(self, stream):
         self._stream = stream
 
     async def reset(self):
@@ -23,7 +21,7 @@ class Scope(object):
 
 
 async def main():
-    s = Scope()
+    s = Scope(SerialStream())
     await s.reset()
     print(await s.get_revision())
 

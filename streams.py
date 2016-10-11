@@ -1,17 +1,28 @@
 
 import asyncio
-import glob
+import os
 import serial
+import serial.tools.list_ports
 
 
-class SerialStream(object):
-    
-    def __init__(self, device=None, loop=None, **kwargs):
-        if device is None:
-            device = (glob.glob('/dev/tty.usb*') + glob.glob('/dev/ttyUSB*'))[0]
-        self._connection = serial.Serial(device, timeout=0, write_timeout=0, **kwargs)
+class SerialStream:
+
+    @staticmethod
+    def available_ports():
+        return [port.device for port in serial.tools.list_ports.comports()]
+
+    def __init__(self, port=-1, loop=None, **kwargs):
+        self._device = self.available_ports()[port]
+        self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._input_buffer = b''
+
+    def __repr__(self):
+        return '<{}:{}>'.format(self.__class__.__name__, self._device)
+
+    def close(self):
+        self._connection.close()
+        self._connection = None
 
     async def write(self, data):
         while data:
@@ -24,7 +35,9 @@ class SerialStream(object):
         return future
 
     def _feed_data(self, data, future):
-        future.set_result(self._connection.write(data))
+        n = self._connection.write(data)
+        print('<write: {}>'.format(repr(data[:n])))
+        future.set_result(n)
         self._loop.remove_writer(self._connection)
 
     async def read(self, n=None):
@@ -62,7 +75,9 @@ class SerialStream(object):
         return future
 
     def _handle_data(self, n, future):
-        future.set_result(self._connection.read(n if n is not None else self._connection.in_waiting))
+        data = self._connection.read(n if n is not None else self._connection.in_waiting)
+        print('<read: {}>'.format(repr(data)))
+        future.set_result(data)
         self._loop.remove_reader(self._connection)
 
 
