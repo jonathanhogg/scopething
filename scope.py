@@ -1,10 +1,11 @@
 
 import asyncio
 from streams import SerialStream
-from vm import VirtualMachine
+
+import vm
 
 
-class Scope(VirtualMachine):
+class Scope(vm.VirtualMachine):
 
     @classmethod
     async def connect(cls, stream=None):
@@ -47,7 +48,7 @@ class Scope(VirtualMachine):
             raise ValueError("Unable to find appropriate solution to required frequency")
         size, nwaves, clock, actualf = best_params
         async with self.transaction():
-            await self.set_registers(vrKitchenSinkB=VirtualMachine.KITCHENSINKB_WAVEFORM_GENERATOR_ENABLE)
+            await self.set_registers(vrKitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
             await self.issue_configure_device_hardware()
         await self.synthesize_wavetable(waveform, ratio)
         await self.translate_wavetable(nwaves=nwaves, size=size, level=vpp/self.awg_maximum_voltage, offset=offset/self.awg_maximum_voltage)
