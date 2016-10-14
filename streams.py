@@ -3,6 +3,7 @@ import asyncio
 import os
 import serial
 import serial.tools.list_ports
+import time
 
 
 class SerialStream:
@@ -36,7 +37,7 @@ class SerialStream:
 
     def _feed_data(self, data, future):
         n = self._connection.write(data)
-        print('<write: {}>'.format(repr(data[:n])))
+        print('{:.3f} -> {}'.format(time.time(), repr(data[:n])))
         future.set_result(n)
         self._loop.remove_writer(self._connection)
 
@@ -76,7 +77,7 @@ class SerialStream:
 
     def _handle_data(self, n, future):
         data = self._connection.read(n if n is not None else self._connection.in_waiting)
-        print('<read: {}>'.format(repr(data)))
+        print('{:.3f} <- {}'.format(time.time(), repr(data)))
         future.set_result(data)
         self._loop.remove_reader(self._connection)
 

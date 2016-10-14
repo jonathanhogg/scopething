@@ -23,75 +23,130 @@ class VirtualMachine:
             return False
 
     Registers = {
-        "vrTriggerLogic": (1, 0x05, '''Trigger Logic, one bit per channel (0 => Low, 1 => High)''', 'uint'),
-        "vrTriggerMask": (1, 0x06, '''Trigger Mask, one bit per channel (0 => Don’t Care, 1 => Active)''', 'uint'),
-        "vrSpockOption": (1, 0x07, '''Spock Option Register (see bit definition table for details)''', 'uint'),
-        "vrSampleAddress": (3, 0x08, '''Sample address (write) 24 bit''', 'uint'),
-        "vrSampleCounter": (3, 0x0b, '''Sample address (read) 24 bit''', 'uint'),
-        "vrTriggerIntro": (2, 0x32, '''Edge trigger intro filter counter (samples/2)''', 'uint'),
-        "vrTriggerOutro": (2, 0x34, '''Edge trigger outro filter counter (samples/2)''', 'uint'),
-        "vrTriggerValue": (2, 0x44, '''Digital (comparator) trigger (signed)''', 'int'),
-        "vrTriggerTime": (4, 0x40, '''Stopwatch trigger time (ticks)''', 'uint'),
-        "vrClockTicks": (2, 0x2e, '''Master Sample (clock) period (ticks)''', 'uint'),
-        "vrClockScale": (2, 0x14, '''Clock divide by N (low byte)''', 'uint'),
-        "vrTraceOption": (1, 0x20, '''Trace Mode Option bits''', 'uint'),
-        "vrTraceMode": (1, 0x21, '''Trace Mode (see Trace Mode Table)''', 'uint'),
-        "vrTraceIntro": (2, 0x26, '''Pre-trigger capture count (samples)''', 'uint'),
-        "vrTraceDelay": (4, 0x22, '''Delay period (uS)''', 'uint'),
-        "vrTraceOutro": (2, 0x2a, '''Post-trigger capture count (samples)''', 'uint'),
-        "vrTimeout": (2, 0x2c, '''Auto trace timeout (auto-ticks)''', 'uint'),
-        "vrPrelude": (2, 0x3a, '''Buffer prefill value''', 'uint'),
-        "vrBufferMode": (1, 0x31, '''Buffer mode''', 'uint'),
-        "vrDumpMode": (1, 0x1e, '''Dump mode''', 'uint'),
-        "vrDumpChan": (1, 0x30, '''Dump (buffer) Channel (0..127,128..254,255)''', 'uint'),
-        "vrDumpSend": (2, 0x18, '''Dump send (samples)''', 'uint'),
-        "vrDumpSkip": (2, 0x1a, '''Dump skip (samples)''', 'uint'),
-        "vrDumpCount": (2, 0x1c, '''Dump size (samples)''', 'uint'),
-        "vrDumpRepeat": (2, 0x16, '''Dump repeat (iterations)''', 'uint'),
-        "vrStreamIdent": (1, 0x36, '''Stream data token''', 'uint'),
-        "vrStampIdent": (1, 0x3c, '''Timestamp token''', 'uint'),
-        "vrAnalogEnable": (1, 0x37, '''Analog channel enable (bitmap)''', 'uint'),
-        "vrDigitalEnable": (1, 0x38, '''Digital channel enable (bitmap)''', 'uint'),
-        "vrSnoopEnable": (1, 0x39, '''Frequency (snoop) channel enable (bitmap)''', 'uint'),
-        "vpCmd": (1, 0x46, '''Command Vector''', 'uint'),
-        "vpMode": (1, 0x47, '''Operation Mode (per command)''', 'uint'),
-        "vpOption": (2, 0x48, '''Command Option (bits fields per command)''', 'uint'),
-        "vpSize": (2, 0x4a, '''Operation (unit/block) size''', 'uint'),
-        "vpIndex": (2, 0x4c, '''Operation index (eg, P Memory Page)''', 'uint'),
-        "vpAddress": (2, 0x4e, '''General purpose address''', 'uint'),
-        "vpClock": (2, 0x50, '''Sample (clock) period (ticks)''', 'uint'),
-        "vpModulo": (2, 0x52, '''Modulo Size (generic)''', 'uint'),
-        "vpLevel": (2, 0x54, '''Output (analog) attenuation (unsigned)''', 'uint'),
-        "vpOffset": (2, 0x56, '''Output (analog) offset (signed)''', 'int'),
-        "vpMask": (2, 0x58, '''Translate source modulo mask''', 'uint'),
-        "vpRatio": (4, 0x5a, '''Translate command ratio (phase step)''', 'uint'),
-        "vpMark": (2, 0x5e, '''Mark count/phase (ticks/step)''', 'uint'),
-        "vpSpace": (2, 0x60, '''Space count/phase (ticks/step)''', 'uint'),
-        "vpRise": (2, 0x82, '''Rising edge clock (channel 1) phase (ticks)''', 'uint'),
-        "vpFall": (2, 0x84, '''Falling edge clock (channel 1) phase (ticks)''', 'uint'),
-        "vpControl": (1, 0x86, '''Clock Control Register (channel 1)''', 'uint'),
-        "vpRise2": (2, 0x88, '''Rising edge clock (channel 2) phase (ticks)''', 'uint'),
-        "vpFall2": (2, 0x8a, '''Falling edge clock (channel 2) phase (ticks)''', 'uint'),
-        "vpControl2": (1, 0x8c, '''Clock Control Register (channel 2)''', 'uint'),
-        "vpRise3": (2, 0x8e, '''Rising edge clock (channel 3) phase (ticks)''', 'uint'),
-        "vpFall3": (2, 0x90, '''Falling edge clock (channel 3) phase (ticks)''', 'uint'),
-        "vpControl3": (1, 0x92, '''Clock Control Register (channel 3)''', 'uint'),
-        "vrEepromData": (1, 0x10, '''EE Data Register''', 'uint'),
-        "vrEepromAddress": (1, 0x11, '''EE Address Register''', 'uint'),
-        "vrConverterLo": (2, 0x64, '''VRB ADC Range Bottom (D Trace Mode)''', 'uint'),
-        "vrConverterHi": (2, 0x66, '''VRB ADC Range Top (D Trace Mode)''', 'uint'),
-        "vrTriggerLevel": (2, 0x68, '''Trigger Level (comparator, unsigned)''', 'uint'),
-        "vrLogicControl": (1, 0x74, '''Logic Control''', 'uint'),
-        "vrRest": (2, 0x78, '''DAC (rest) level''', 'uint'),
-        "vrKitchenSinkA": (1, 0x7b, '''Kitchen Sink Register A''', 'uint'),
-        "vrKitchenSinkB": (1, 0x7c, '''Kitchen Sink Register B''', 'uint'),
+        "vrTriggerLogic": (0x05, 'U8', "Trigger Logic, one bit per channel (0 => Low, 1 => High)"),
+        "vrTriggerMask": (0x06, 'U8', "Trigger Mask, one bit per channel (0 => Don’t Care, 1 => Active)"),
+        "vrSpockOption": (0x07, 'U8', "Spock Option Register (see bit definition table for details)"),
+        "vrSampleAddress": (0x08, 'U24', "Sample address (write) 24 bit"),
+        "vrSampleCounter": (0x0b, 'U24', "Sample address (read) 24 bit"),
+        "vrTriggerIntro": (0x32, 'U24', "Edge trigger intro filter counter (samples/2)"),
+        "vrTriggerOutro": (0x34, 'U16', "Edge trigger outro filter counter (samples/2)"),
+        "vrTriggerValue": (0x44, 'S16', "Digital (comparator) trigger (signed)"),
+        "vrTriggerTime": (0x40, 'U32', "Stopwatch trigger time (ticks)"),
+        "vrClockTicks": (0x2e, 'U16', "Master Sample (clock) period (ticks)"),
+        "vrClockScale": (0x14, 'U16', "Clock divide by N (low byte)"),
+        "vrTraceOption": (0x20, 'U8', "Trace Mode Option bits"),
+        "vrTraceMode": (0x21, 'U8', "Trace Mode (see Trace Mode Table)"),
+        "vrTraceIntro": (0x26, 'U16', "Pre-trigger capture count (samples)"),
+        "vrTraceDelay": (0x22, 'U32', "Delay period (uS)"),
+        "vrTraceOutro": (0x2a, 'U16', "Post-trigger capture count (samples)"),
+        "vrTimeout": (0x2c, 'U16', "Auto trace timeout (auto-ticks)"),
+        "vrPrelude": (0x3a, 'U16', "Buffer prefill value"),
+        "vrBufferMode": (0x31, 'U8', "Buffer mode"),
+        "vrDumpMode": (0x1e, 'U8', "Dump mode"),
+        "vrDumpChan": (0x30, 'U8', "Dump (buffer) Channel (0..127,128..254,255)"),
+        "vrDumpSend": (0x18, 'U16', "Dump send (samples)"),
+        "vrDumpSkip": (0x1a, 'U16', "Dump skip (samples)"),
+        "vrDumpCount": (0x1c, 'U16', "Dump size (samples)"),
+        "vrDumpRepeat": (0x16, 'U16', "Dump repeat (iterations)"),
+        "vrStreamIdent": (0x36, 'U8', "Stream data token"),
+        "vrStampIdent": (0x3c, 'U8', "Timestamp token"),
+        "vrAnalogEnable": (0x37, 'U8', "Analog channel enable (bitmap)"),
+        "vrDigitalEnable": (0x38, 'U8', "Digital channel enable (bitmap)"),
+        "vrSnoopEnable": (0x39, 'U8', "Frequency (snoop) channel enable (bitmap)"),
+        "vpCmd": (0x46, 'U8', "Command Vector"),
+        "vpMode": (0x47, 'U8', "Operation Mode (per command)"),
+        "vpOption": (0x48, 'U16', "Command Option (bits fields per command)"),
+        "vpSize": (0x4a, 'U16', "Operation (unit/block) size"),
+        "vpIndex": (0x4c, 'U16', "Operation index (eg, P Memory Page)"),
+        "vpAddress": (0x4e, 'U16', "General purpose address"),
+        "vpClock": (0x50, 'U16', "Sample (clock) period (ticks)"),
+        "vpModulo": (0x52, 'U16', "Modulo Size (generic)"),
+        "vpLevel": (0x54, 'U0.16', "Output (analog) attenuation (unsigned)"),
+        "vpOffset": (0x56, 'S1.15', "Output (analog) offset (signed)"),
+        "vpMask": (0x58, 'U16', "Translate source modulo mask"),
+        "vpRatio": (0x5a, 'U16.16', "Translate command ratio (phase step)"),
+        "vpMark": (0x5e, 'U16', "Mark count/phase (ticks/step)"),
+        "vpSpace": (0x60, 'U16', "Space count/phase (ticks/step)"),
+        "vpRise": (0x82, 'U16', "Rising edge clock (channel 1) phase (ticks)"),
+        "vpFall": (0x84, 'U16', "Falling edge clock (channel 1) phase (ticks)"),
+        "vpControl": (0x86, 'U8', "Clock Control Register (channel 1)"),
+        "vpRise2": (0x88, 'U16', "Rising edge clock (channel 2) phase (ticks)"),
+        "vpFall2": (0x8a, 'U16', "Falling edge clock (channel 2) phase (ticks)"),
+        "vpControl2": (0x8c, 'U8', "Clock Control Register (channel 2)"),
+        "vpRise3": (0x8e, 'U16', "Rising edge clock (channel 3) phase (ticks)"),
+        "vpFall3": (0x90, 'U16', "Falling edge clock (channel 3) phase (ticks)"),
+        "vpControl3": (0x92, 'U8', "Clock Control Register (channel 3)"),
+        "vrEepromData": (0x10, 'U8', "EE Data Register"),
+        "vrEepromAddress": (0x11, 'U8', "EE Address Register"),
+        "vrConverterLo": (0x64, 'U16', "VRB ADC Range Bottom (D Trace Mode)"),
+        "vrConverterHi": (0x66, 'U16', "VRB ADC Range Top (D Trace Mode)"),
+        "vrTriggerLevel": (0x68, 'U16', "Trigger Level (comparator, unsigned)"),
+        "vrLogicControl": (0x74, 'U8', "Logic Control"),
+        "vrRest": (0x78, 'U16', "DAC (rest) level"),
+        "vrKitchenSinkA": (0x7b, 'U8', "Kitchen Sink Register A"),
+        "vrKitchenSinkB": (0x7c, 'U8', "Kitchen Sink Register B"),
+        "vpMap0": (0x94, 'U8', "Peripheral Pin Select Channel 0"),
+        "vpMap1": (0x95, 'U8', "Peripheral Pin Select Channel 1"),
+        "vpMap2": (0x96, 'U8', "Peripheral Pin Select Channel 2"),
+        "vpMap3": (0x97, 'U8', "Peripheral Pin Select Channel 3"),
+        "vpMap4": (0x98, 'U8', "Peripheral Pin Select Channel 4"),
+        "vpMap5": (0x99, 'U8', "Peripheral Pin Select Channel 5"),
+        "vpMap6": (0x9a, 'U8', "Peripheral Pin Select Channel 6"),
+        "vpMap7": (0x9b, 'U8', "Peripheral Pin Select Channel 7"),
+        "vrMasterClockN": (0xf7, 'U8', "PLL prescale (DIV N)"),
+        "vrMasterClockM": (0xf8, 'U16', "PLL multiplier (MUL M)"),
+        "vrLedLevelRED": (0xfa, 'U8', "Red LED Intensity (VM10 only)"),
+        "vrLedLevelGRN": (0xfb, 'U8', "Green LED Intensity (VM10 only)"),
+        "vrLedLevelYEL": (0xfc, 'U8', "Yellow LED Intensity (VM10 only)"),
+        "vcBaudHost": (0xfe, 'U16', "baud rate (host side)"),
     }
+
+    TraceModes = {
+        "tmAnalog": 0,
+        "tmAnalogFast": 4,
+        "tmAnalogShot": 11,
+        "tmMixed": 1,
+        "tmMixedFast": 5,
+        "tmMixedShot": 12,
+        "tmLogic": 14,
+        "tmLogicFast": 15,
+        "tmLogicShot": 13,
+        "tmAnalogChop": 2,
+        "tmAnalogFastChop": 6,
+        "tmAnalogShotChop": 16,
+        "tmMixedChop": 3,
+        "tmMixedFastChop": 7,
+        "tmMixedShotChop": 17,
+        "tmMacro": 18,
+        "tmMacroChop": 19,
+    }
+
+    BufferModes = {
+        "bmSingle": 0,
+        "bmChop": 1,
+        "bmDual": 2,
+        "bmChopDual": 3,
+        "bmMacro": 4,
+        "bmMacroChop": 5,
+    }
+
+    SPOCKOPTION_TRIGGER_INVERT               = 0x40
+    SPOCKOPTION_TRIGGER_SOURCE_A             = 0x00
+    SPOCKOPTION_TRIGGER_SOURCE_B             = 0x04
+    SPOCKOPTION_TRIGGER_SWAP                 = 0x02
+    SPOCKOPTION_TRIGGER_TYPE_SAMPLED_ANALOG  = 0x00
+    SPOCKOPTION_TRIGGER_TYPE_HARDWARE        = 0x01
+
+    KITCHENSINKA_CHANNEL_A_COMPARATOR_ENABLE = 0x80
+    KITCHENSINKA_CHANNEL_B_COMPARATOR_ENABLE = 0x40
+    KITCHENSINKB_ANALOG_FILTER_ENABLE        = 0x80
+    KITCHENSINKB_WAVEFORM_GENERATOR_ENABLE   = 0x40
 
     def __init__(self, stream):
         self._stream = stream
         self._transactions = []
 
-    def new_transaction(self):
+    def transaction(self):
         return self.Transaction(self)
 
     async def issue(self, cmd):
@@ -107,6 +162,8 @@ class VirtualMachine:
         return (await self.read_replies(1))[0]
 
     async def read_replies(self, n):
+        if self._transactions:
+            raise TypeError("Command transaction in progress")
         await self._stream.readuntil(b'\r')
         replies = []
         for i in range(n):
@@ -114,139 +171,130 @@ class VirtualMachine:
         return replies
 
     async def reset(self):
+        if self._transactions:
+            raise TypeError("Command transaction in progress")
         await self._stream.write(b'!')
         await self._stream.readuntil(b'!')
 
-    async def set_register(self, name, value):
-        width, base, desc, dtype = self.Registers[name]
-        bs = struct.pack('<i' if dtype == 'int' else '<I', value)
-        cmd = '{:02x}@'.format(base) + 'z'.join('{:02x}'.format(bs[i]) for i in range(width)) + 's'
-        await self.issue(cmd)
+    def encode(self, value, dtype):
+        sign = dtype[0]
+        if '.' in dtype:
+            whole, fraction = map(int, dtype[1:].split('.', 1))
+            width = whole + fraction
+            value = int(round(value * (1 << fraction)))
+        else:
+            width = int(dtype[1:])
+        if sign == 'U':
+            n = 1 << width
+            value = max(0, min(value, n-1))
+            bs = struct.pack('<I', value)
+        elif sign == 'S':
+            n = 1 << (width - 1)
+            value = max(-n, min(value, n-1))
+            bs = struct.pack('<i', value)
+        else:
+            raise TypeError("Unrecognised type")
+        return bs[:width//8]
+
+    def decode(self, bs, dtype):
+        if dtype == 'int':
+            return struct.unpack('<i', bs)[0]
+        elif dtype == 'uint':
+            return struct.unpack('<I', bs)[0]
+        elif dtype.startswith('fixed.'):
+            fraction_bits = int(dtype[6:])
+            return struct.unpack('<i', bs)[0] / (1<<fraction_bits)
+        elif dtype.startswith('ufixed.'):
+            fraction_bits = int(dtype[7:])
+            return struct.unpack('<I', bs)[0] / (1<<fraction_bits)
+        else:
+            raise TypeError("Unrecognised type")
+
+    def calculate_width(self, dtype):
+        if '.' in dtype:
+            return sum(map(int, dtype[1:].split('.', 1))) // 8
+        else:
+            return int(dtype[1:]) // 8
 
     async def set_registers(self, **kwargs):
-        async with self.new_transaction():
-            for name, value in kwargs.items():
-                await self.set_register(name, value)
+        cmd = ''
+        r0 = r1 = None
+        for base, name in sorted((self.Registers[name][0], name) for name in kwargs):
+            base, dtype, desc = self.Registers[name]
+            for i, byte in enumerate(self.encode(kwargs[name], dtype)):
+                if cmd:
+                    cmd += 'z'
+                    r1 += 1
+                address = base + i
+                if r1 is None or address > r1 + 3:
+                    cmd += '{:02x}@'.format(address)
+                    r0 = r1 = address
+                else:
+                    cmd += 'n' * (address - r1)
+                    r1 = address
+                if byte != r0:
+                    cmd += '[' if byte == 0 else '{:02x}'.format(byte)
+                    r0 = byte
+        if cmd:
+            await self.issue(cmd + 's')
 
     async def get_register(self, name):
-        width, base, desc, dtype = self.Registers[name]
+        base, dtype, desc = self.Registers[name]
         await self.issue('{:02x}@p'.format(base))
-        bs = []
+        values = []
+        width = self.calculate_width(dtype)
         for i in range(width):
-            bs.append(int(await self.read_reply(), 16))
+            values.append(int(await self.read_reply(), 16))
             if i < width-1:
                 await self.issue(b'np')
-        for i in range(4 - width):
-            bs.append(0)
-        value = struct.unpack('<i' if dtype == 'int' else '<I', bytes(bs))[0]
-        return value
+        return self.decode(bytes(values), dtype)
 
-    async def get_revision(self):
+    async def issue_get_revision(self):
         await self.issue(b'?')
-        return await self.read_reply()
 
-    async def capture_spock_registers(self):
+    async def issue_capture_spock_registers(self):
         await self.issue(b'<')
 
-    async def program_spock_registers(self):
+    async def issue_program_spock_registers(self):
         await self.issue(b'>')
 
-    async def configure_device_hardware(self):
+    async def issue_configure_device_hardware(self):
         await self.issue(b'U')
 
-    async def streaming_trace(self):
+    async def issue_streaming_trace(self):
         await self.issue(b'T')
 
-    async def triggered_trace(self):
+    async def issue_triggered_trace(self):
         await self.issue(b'D')
 
-    async def cancel_trace(self):
+    async def issue_cancel_trace(self):
         await self.issue(b'K')
 
-    async def sample_dump_csv(self):
+    async def issue_sample_dump_csv(self):
         await self.issue(b'S')
 
-    async def analog_dump_binary(self):
+    async def issue_analog_dump_binary(self):
         await self.issue(b'S')
 
-    async def read_wavetable(self, size=1024, address=0):
-        async with self.new_transaction():
-            await self.set_registers(vpSize=size, vpAddress=address)
-            await self.issue(b'R')
-        return await self._stream.readexactly(size)
+    async def issue_wavetable_read(self):
+        await self.issue(b'R')
 
-    async def write_wavetable(self, data, address=0):
-        async with self.new_transaction():
-            await self.set_registers(vpSize=1, vpAddress=address)
-            for byte in data:
-                await self.issue('{:02x}W'.format(byte))
+    async def wavetable_write(self, byte):
+        await self.issue('{:02x}W'.format(byte))
 
-    async def synthesize_wavetable(self, mode='sine', ratio=0.5):
-        mode = {'sine': 0, 'sawtooth': 1, 'exponential': 2, 'square': 3}[mode.lower()]
-        async with self.new_transaction():
-            await self.set_registers(vpCmd=0, vpMode=mode, vpRatio=int(max(0, min(ratio, 1))*65535))
-            await self.issue(b'Y')
+    async def issue_synthesize_wavetable(self):
+        await self.issue(b'Y')
 
-    async def translate_wavetable(self, ratio, level=1, offset=0, size=0, index=0, address=0):
-        async with self.new_transaction():
-            await self.set_registers(vpCmd=0, vpMode=0, vpLevel=int(65535*level), vpOffset=int(65535*offset), vpRatio=ratio,
-                                     vpSize=size, vpIndex=index, vpAddress=address)
-            await self.issue(b'X')
+    async def issue_translate_wavetable(self):
+        await self.issue(b'X')
 
-    async def stop_waveform_generator(self):
-        async with self.new_transaction():
-            await self.set_registers(vpCmd=1, vpMode=0)
-            await self.issue(b'Z')
+    async def issue_control_waveform_generator(self):
+        await self.issue(b'Z')
 
-    async def start_waveform_generator(self, clock, modulo, mark, space, rest, option):
-        async with self.new_transaction():
-            await self.set_registers(vpCmd=2, vpMode=0, vpClock=clock, vpModulo=modulo, 
-                                     vpMark=mark, vpSpace=space, vrRest=rest, vpOption=option)
-            await self.issue(b'Z')
+    async def issue_read_eeprom(self):
+        await self.issue(b'r')
 
-    async def start_clock_generator(self):
-        async with self.new_transaction():
-            await self.set_registers(vpCmd=3, vpMode=0)
-            await self.issue(b'Z')
+    async def issue_write_eeprom(self):
+        await self.issue(b'w')
 
-    async def read_eeprom(self, address):
-        async with self.new_transaction():
-            await self.set_registers(vrEepromAddress=address)
-            await self.issue(b'r')
-        return int(await self.read_reply(), 16)
-
-    async def write_eeprom(self, address, data):
-        async with self.new_transaction():
-            await self.set_registers(vrEepromAddress=address, vrEepromData=data)
-            await self.issue(b'w')
-        return int(await self.read_reply(), 16)
-
-
-async def main():
-    from streams import SerialStream
-    vm = VirtualMachine(SerialStream())
-    await vm.reset()
-    print(await vm.get_revision())
-    print(await vm.get_register('vrConverterLo'))
-    print(await vm.get_register('vrTriggerLevel'))
-    print(await vm.get_register('vrConverterHi'))
-    await vm.set_register('vrTriggerLevel', 15000)
-    print(await vm.get_register('vrTriggerLevel'))
-    n = await vm.read_eeprom(0)
-    print(n)
-    print(await vm.write_eeprom(0, n+1))
-    print(await vm.read_eeprom(0))
-    async with vm.new_transaction():
-        await vm.set_registers(vrKitchenSinkB=0x40)
-        await vm.configure_device_hardware()
-    await vm.synthesize_wavetable('sawtooth')
-    #data = await vm.read_wavetable()
-    #global array
-    #array = np.ndarray(buffer=data, shape=(len(data),), dtype='uint8')
-    #print(array)
-    await vm.translate_wavetable(671088)
-    await vm.start_waveform_generator(clock=40, modulo=1000, mark=10, space=1, rest=0x7f00, option=0x8004)
-
-if __name__ == '__main__':
-    asyncio.get_event_loop().run_until_complete(main())
 
