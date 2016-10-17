@@ -1,9 +1,12 @@
 
 import asyncio
+import logging
 import os
 import serial
 import serial.tools.list_ports
-import time
+
+
+Log = logging.getLogger('streams')
 
 
 class SerialStream:
@@ -16,7 +19,7 @@ class SerialStream:
         self._device = self.available_ports()[port]
         self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
         self._loop = loop if loop is not None else asyncio.get_event_loop()
-        self._input_buffer = b''
+        self._input_buffer = bytes()
 
     def __repr__(self):
         return '<{}:{}>'.format(self.__class__.__name__, self._device)
@@ -37,7 +40,7 @@ class SerialStream:
 
     def _feed_data(self, data, future):
         n = self._connection.write(data)
-        print('{:.3f} -> {}'.format(time.time(), repr(data[:n])))
+        Log.debug('Write {}'.format(repr(data[:n])))
         future.set_result(n)
         self._loop.remove_writer(self._connection)
 
@@ -45,7 +48,7 @@ class SerialStream:
         while True:
             if self._input_buffer:
                 if n is None:
-                    data, self._input_buffer = self._input__buffer, b''
+                    data, self._input_buffer = self._input_buffer, bytes()
                 else:
                     data, self._input_buffer = self._input_buffer[:n], self._input_buffer[n:]
                 return data
@@ -77,7 +80,7 @@ class SerialStream:
 
     def _handle_data(self, n, future):
         data = self._connection.read(n if n is not None else self._connection.in_waiting)
-        print('{:.3f} <- {}'.format(time.time(), repr(data)))
+        Log.debug('Read {}'.format(repr(data)))
         future.set_result(data)
         self._loop.remove_reader(self._connection)
 
