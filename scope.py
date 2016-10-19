@@ -27,7 +27,7 @@ class Scope(vm.VirtualMachine):
         await self.reset()
         await self.issue_get_revision()
         revision = ((await self.read_replies(2))[1]).decode('ascii')
-        if revision.startswith('BS0005'):
+        if revision == 'BS000501':
             self.awg_clock_period = 25e-9
             self.awg_wavetable_size = 1024
             self.awg_sample_buffer_size = 1024
@@ -43,23 +43,23 @@ class Scope(vm.VirtualMachine):
             self.trigger_low = -7.517
             self.trigger_high = 10.816
         await self.load_params()
+        self._generator_running = False
 
     async def load_params(self):
         params = []
-        for i in range(struct.calcsize('<H3f3f')):
-            params.append(await self.read_eeprom(i+100))
-        params = struct.unpack('<H3f3f', bytes(params))
-        if params[0] == self.PARAMS_MAGIC:
-            print("Loading params", params[1:])
+        for i in range(struct.calcsize('<H3d3dH')):
+            params.append(await self.read_eeprom(i+70))
+        params = struct.unpack('<H3d3dH', bytes(params))
+        if params[0] == self.PARAMS_MAGIC and params[-1] == self.PARAMS_MAGIC:
             self.analog_low_ks = params[1:4]
             self.analog_high_ks = params[4:7]
 
     async def save_params(self):
-        params = struct.pack('<H3f3f', self.PARAMS_MAGIC, *(self.analog_low_ks + self.analog_high_ks))
+        params = struct.pack('<H3d3dH', self.PARAMS_MAGIC, *(self.analog_low_ks + self.analog_high_ks + (self.PARAMS_MAGIC,)))
         for i, byte in enumerate(params):
-            await self.write_eeprom(i+100, byte)
+            await self.write_eeprom(i+70, byte)
 
-    async def capture(self, channels=['A'], trigger_channel=None, trigger_level=0, trigger_type='rising',
+    async def capture(self, channels=['A'], trigger_channel=None, trigger_level=0, trigger_type='rising', hair_trigger=False,
                             period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False):
         if 'A' in channels and 'B' in channels:
             nsamples_multiplier = 2
@@ -130,9 +130,12 @@ class Scope(vm.VirtualMachine):
         elif trigger_channel == 'B':
             kitchen_sink_a = vm.KitchenSinkA.ChannelBComparatorEnable
             spock_option |= vm.SpockOption.TriggerSourceB
+        kitchen_sink_b = vm.KitchenSinkB.AnalogFilterEnable
+        if self._generator_running:
+            kitchen_sink_b |= vm.KitchenSinkB.WaveformGeneratorEnable
         if trigger_type.lower() in {'falling', 'below'}:
             spock_option |= vm.SpockOption.TriggerInvert
-        trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else 4
+        trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else (1 if hair_trigger else 4)
         if not raw:
             trigger_level = (trigger_level - self.trigger_low) / (self.trigger_high - self.trigger_low)
         analog_enable = 0
@@ -142,29 +145,22 @@ class Scope(vm.VirtualMachine):
             analog_enable |= 2
 
         async with self.transaction():
-            await self.set_registers(TraceMode=trace_mode, ClockTicks=ticks, ClockScale=1,
+            await self.set_registers(TraceMode=trace_mode, BufferMode=buffer_mode, SampleAddress=0, ClockTicks=ticks, ClockScale=1,
                                      TraceIntro=total_samples//2, TraceOutro=total_samples//2, TraceDelay=0,
                                      Timeout=int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick)),
-                                     TriggerMask=0x7f, TriggerLogic=0x80, TriggerLevel=trigger_level, 
-                                     TriggerIntro=trigger_intro, TriggerOutro=4, SpockOption=spock_option, Prelude=0,
+                                     TriggerMask=0x7f, TriggerLogic=0x80, TriggerLevel=trigger_level, SpockOption=spock_option,
+                                     TriggerIntro=trigger_intro, TriggerOutro=2 if hair_trigger else 4, Prelude=0,
                                      ConverterLo=low if raw else self._analog_map_func(self.analog_low_ks, low, high),
                                      ConverterHi=high if raw else self._analog_map_func(self.analog_high_ks, low, high),
-                                     KitchenSinkA=kitchen_sink_a,
-                                     KitchenSinkB=vm.KitchenSinkB.AnalogFilterEnable | vm.KitchenSinkB.WaveformGeneratorEnable,
-                                     AnalogEnable=analog_enable, BufferMode=buffer_mode, SampleAddress=0)
+                                     KitchenSinkA=kitchen_sink_a, KitchenSinkB=kitchen_sink_b, AnalogEnable=analog_enable)
             await self.issue_program_spock_registers()
             await self.issue_configure_device_hardware()
             await self.issue_triggered_trace()
         while True:
-            code, timestamp = await self.read_replies(2)
-            code = int(code.decode('ascii'), 16)
-            timestamp = int(timestamp.decode('ascii'), 16)
-            if code == 2:
-                start_timestamp = timestamp
-            else:
-                end_timestamp = timestamp
+            code, timestamp = (int(x, 16) for x in await self.read_replies(2))
+            if code != 2:
                 break
-        address = int((await self.read_replies(1))[0].decode('ascii'), 16) // nsamples_multiplier
+        address = int((await self.read_replies(1))[0], 16) // nsamples_multiplier
         traces = {}
         for dump_channel, channel in enumerate(sorted(channels)):
             async with self.transaction():
@@ -228,6 +224,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(KitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
             await self.issue_configure_device_hardware()
             await self.issue('.')
+        self._generator_running = True
         return actualf
 
     async def stop_generator(self):
@@ -236,6 +233,7 @@ class Scope(vm.VirtualMachine):
             await self.issue_control_waveform_generator()
             await self.set_registers(KitchenSinkB=0)
             await self.issue_configure_device_hardware()
+        self._generator_running = False
 
     async def read_wavetable(self):
         with self.transaction():
@@ -301,5 +299,8 @@ def capture(*args, **kwargs):
     return pd.DataFrame(asyncio.get_event_loop().run_until_complete(s.capture(*args, **kwargs)))
 
 if __name__ == '__main__':
+    import logging
+    import sys
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 

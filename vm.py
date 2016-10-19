@@ -4,7 +4,7 @@ import logging
 import struct
 
 
-Log = logging.getLogger('streams')
+Log = logging.getLogger('vm')
 
 
 Registers = {
@@ -257,7 +257,7 @@ class VirtualMachine:
         values = []
         width = calculate_width(dtype)
         for i in range(width):
-            values.append(int(await self.read_reply(), 16))
+            values.append(int((await self.read_replies(2))[1], 16))
             if i < width-1:
                 await self.issue(b'np')
         return decode(bytes(values), dtype)
