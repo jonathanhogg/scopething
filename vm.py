@@ -1,7 +1,10 @@
 
 import asyncio
-import numpy as np
+import logging
 import struct
+
+
+Log = logging.getLogger('streams')
 
 
 Registers = {
@@ -10,9 +13,9 @@ Registers = {
     "SpockOption": (0x07, 'U8', "Spock Option Register (see bit definition table for details)"),
     "SampleAddress": (0x08, 'U24', "Sample address (write) 24 bit"),
     "SampleCounter": (0x0b, 'U24', "Sample address (read) 24 bit"),
-    "TriggerIntro": (0x32, 'U24', "Edge trigger intro filter counter (samples/2)"),
+    "TriggerIntro": (0x32, 'U16', "Edge trigger intro filter counter (samples/2)"),
     "TriggerOutro": (0x34, 'U16', "Edge trigger outro filter counter (samples/2)"),
-    "TriggerValue": (0x44, 'S16', "Digital (comparator) trigger (signed)"),
+    "TriggerValue": (0x44, 'S0.16', "Digital (comparator) trigger (signed)"),
     "TriggerTime": (0x40, 'U32', "Stopwatch trigger time (ticks)"),
     "ClockTicks": (0x2e, 'U16', "Master Sample (clock) period (ticks)"),
     "ClockScale": (0x14, 'U16', "Clock divide by N (low byte)"),
@@ -62,7 +65,7 @@ Registers = {
     "EepromAddress": (0x11, 'U8', "EE Address Register"),
     "ConverterLo": (0x64, 'U0.16', "VRB ADC Range Bottom (D Trace Mode)"),
     "ConverterHi": (0x66, 'U0.16', "VRB ADC Range Top (D Trace Mode)"),
-    "TriggerLevel": (0x68, 'U16', "Trigger Level (comparator, unsigned)"),
+    "TriggerLevel": (0x68, 'U0.16', "Trigger Level (comparator, unsigned)"),
     "LogicControl": (0x74, 'U8', "Logic Control"),
     "Rest": (0x78, 'U16', "DAC (rest) level"),
     "KitchenSinkA": (0x7b, 'U8', "Kitchen Sink Register A"),
@@ -229,7 +232,9 @@ class VirtualMachine:
         r0 = r1 = None
         for base, name in sorted((Registers[name][0], name) for name in kwargs):
             base, dtype, desc = Registers[name]
-            for i, byte in enumerate(encode(kwargs[name], dtype)):
+            bs = encode(kwargs[name], dtype)
+            Log.debug("{} = 0x{}".format(name, ''.join('{:02x}'.format(b) for b in reversed(bs))))
+            for i, byte in enumerate(bs):
                 if cmd:
                     cmd += 'z'
                     r1 += 1
