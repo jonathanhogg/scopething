@@ -66,7 +66,7 @@ class Scope(vm.VirtualMachine):
         else:
             nsamples_multiplier = 1
         ticks = int(period / nsamples / nsamples_multiplier / self.capture_clock_period)
-        if ticks >= 40 and ticks < 65536:
+        if ticks >= 20 and ticks < 65536:
             sample_width = 2
             buffer_width = 6*1024
             dump_mode = vm.DumpMode.Native
@@ -123,7 +123,7 @@ class Scope(vm.VirtualMachine):
             trigger_channel = channels[0]
         else:
             assert trigger_channel in channels
-        spock_option = vm.SpockOption.TriggerTypeHardwareComparator
+        spock_option = vm.SpockOption.TriggerTypeSampledAnalog #HardwareComparator
         if trigger_channel == 'A':
             kitchen_sink_a = vm.KitchenSinkA.ChannelAComparatorEnable
             spock_option |= vm.SpockOption.TriggerSourceA
@@ -148,7 +148,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(TraceMode=trace_mode, BufferMode=buffer_mode, SampleAddress=0, ClockTicks=ticks, ClockScale=1,
                                      TraceIntro=total_samples//2, TraceOutro=total_samples//2, TraceDelay=0,
                                      Timeout=int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick)),
-                                     TriggerMask=0x7f, TriggerLogic=0x80, TriggerLevel=trigger_level, SpockOption=spock_option,
+                                     TriggerMask=0x7f, TriggerLogic=0x80, TriggerValue=trigger_level, SpockOption=spock_option,
                                      TriggerIntro=trigger_intro, TriggerOutro=2 if hair_trigger else 4, Prelude=0,
                                      ConverterLo=low if raw else self._analog_map_func(self.analog_low_ks, low, high),
                                      ConverterHi=high if raw else self._analog_map_func(self.analog_high_ks, low, high),
@@ -291,7 +291,7 @@ async def main():
     s = await Scope.connect()
     x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
     y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
-    await s.start_generator(1000, wavetable=y)
+    await s.start_generator(1000, waveform='sawtooth') #wavetable=y)
     #if await s.calibrate():
     #    await s.save_params()
 
