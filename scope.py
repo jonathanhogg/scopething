@@ -33,8 +33,9 @@ class Scope(vm.VirtualMachine):
             self.awg_sample_buffer_size = 1024
             self.awg_minimum_clock = 33
             self.awg_maximum_voltage = 3.3
-            self.analog_low_ks = (0.43307040504672523, 0.060970272170312846, -0.0037186072558476487)
-            self.analog_high_ks = (0.37575241029061407, -0.0039308497942329686, 0.060955881466731247)
+            self.analog_low_ks = (0.43288780392308074, 0.060673410453476399, -0.0036026442646096687)
+            self.analog_high_ks = (0.37518932193108517, -0.0036098646022277164, 0.06072914261381563)
+            self.analog_offsets = {'A': -0.011675230981703359, 'B': 0.011675230981703359}
             self.analog_min = -5.7
             self.analog_max = 8
             self.capture_clock_period = 25e-9
@@ -42,20 +43,23 @@ class Scope(vm.VirtualMachine):
             self.trigger_timeout_tick = 6.4e-6
             self.trigger_low = -7.517
             self.trigger_high = 10.816
-        await self.load_params()
+        #await self.load_params()  XXX switch this off until I understand EEPROM better
         self._generator_running = False
 
     async def load_params(self):
         params = []
-        for i in range(struct.calcsize('<H3d3dH')):
+        for i in range(struct.calcsize('<H8fH')):
             params.append(await self.read_eeprom(i+70))
-        params = struct.unpack('<H3d3dH', bytes(params))
+        params = struct.unpack('<H8fH', bytes(params))
         if params[0] == self.PARAMS_MAGIC and params[-1] == self.PARAMS_MAGIC:
-            self.analog_low_ks = params[1:4]
-            self.analog_high_ks = params[4:7]
+            self.analog_low_ks = tuple(params[1:4])
+            self.analog_high_ks = tuple(params[4:7])
+            self.analog_offsets['A'] = params[8]
+            self.analog_offsets['B'] = params[9]
 
     async def save_params(self):
-        params = struct.pack('<H3d3dH', self.PARAMS_MAGIC, *(self.analog_low_ks + self.analog_high_ks + (self.PARAMS_MAGIC,)))
+        params = struct.pack('<H8fH', self.PARAMS_MAGIC, *self.analog_low_ks, *self.analog_high_ks,
+                                      self.analog_offsets['A'], self.analog_offsets['B'], self.PARAMS_MAGIC)
         for i, byte in enumerate(params):
             await self.write_eeprom(i+70, byte)
 
@@ -123,7 +127,7 @@ class Scope(vm.VirtualMachine):
             trigger_channel = channels[0]
         else:
             assert trigger_channel in channels
-        spock_option = vm.SpockOption.TriggerTypeSampledAnalog #HardwareComparator
+        spock_option = vm.SpockOption.TriggerTypeHardwareComparator
         if trigger_channel == 'A':
             kitchen_sink_a = vm.KitchenSinkA.ChannelAComparatorEnable
             spock_option |= vm.SpockOption.TriggerSourceA
@@ -148,7 +152,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(TraceMode=trace_mode, BufferMode=buffer_mode, SampleAddress=0, ClockTicks=ticks, ClockScale=1,
                                      TraceIntro=total_samples//2, TraceOutro=total_samples//2, TraceDelay=0,
                                      Timeout=int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick)),
-                                     TriggerMask=0x7f, TriggerLogic=0x80, TriggerValue=trigger_level, SpockOption=spock_option,
+                                     TriggerMask=0x7f, TriggerLogic=0x80, TriggerLevel=trigger_level, SpockOption=spock_option,
                                      TriggerIntro=trigger_intro, TriggerOutro=2 if hair_trigger else 4, Prelude=0,
                                      ConverterLo=low if raw else self._analog_map_func(self.analog_low_ks, low, high),
                                      ConverterHi=high if raw else self._analog_map_func(self.analog_high_ks, low, high),
@@ -174,12 +178,13 @@ class Scope(vm.VirtualMachine):
                 if raw:
                     trace = [(value / 65536 + 0.5) for value in struct.unpack('>{}h'.format(nsamples), data)]
                 else:
-                    trace = [(value / 65536 + 0.5) * (high - low) + low for value in struct.unpack('>{}h'.format(nsamples), data)]
+                    trace = [(value / 65536 + 0.5) * (high - low) + low + self.analog_offsets[channel]
+                             for value in struct.unpack('>{}h'.format(nsamples), data)]
             else:
                 if raw:
                     trace = [value / 256 for value in data]
                 else:
-                    trace = [value / 256 * (high - low) + low for value in data]
+                    trace = [value / 256 * (high - low) + low + self.analog_offsets[channel] for value in data]
             traces[channel] = trace
         return traces
 
@@ -251,36 +256,43 @@ class Scope(vm.VirtualMachine):
         async with self.transaction():
             await self.set_registers(EepromAddress=address, EepromData=byte)
             await self.issue_write_eeprom()
-        return int((await self.read_replies(2))[1], 16)
+        if int((await self.read_replies(2))[1], 16) != byte:
+            raise RuntimeError("Error writing EEPROM byte")
 
-    async def calibrate(self, channels='AB', n=40):
+    async def calibrate(self, n=33):
         import numpy as np
         import pandas as pd
         from scipy.optimize import leastsq
-        await self.start_generator(1000, waveform='square')
         items = []
+        await self.start_generator(1000, waveform='square')
         for low in np.linspace(0.063, 0.4, n):
             for high in np.linspace(0.877, 0.6, n):
-                data = await self.capture(channels=channels, period=1e-3, trigger_level=0.5, nsamples=1000, low=low, high=high, raw=True)
-                values = np.hstack(list(data.values()))
-                values.sort()
-                zero = values[10:len(values)//2-10].mean()
-                v33 = values[-len(values)//2+10:-10].mean()
-                analog_range = 3.3 / (v33 - zero)
+                data = await self.capture(channels='AB', period=2e-3, trigger_level=0.5, nsamples=1000, low=low, high=high, raw=True)
+                A = np.array(data['A'])
+                A.sort()
+                B = np.array(data['B'])
+                B.sort()
+                Azero, A3v3 = A[10:490].mean(), A[510:990].mean()
+                Bzero, B3v3 = B[10:490].mean(), B[510:990].mean()
+                zero = (Azero + Bzero) / 2
+                analog_range = 3.3 / ((A3v3 + B3v3)/2 - zero)
                 analog_low = -zero * analog_range
                 analog_high = analog_low + analog_range
-                items.append({'low': low, 'high': high, 'analog_low': analog_low, 'analog_high': analog_high})
+                ABoffset = (Azero - Bzero) / 2 * analog_range
+                items.append({'low': low, 'high': high, 'analog_low': analog_low, 'analog_high': analog_high, 'offset': ABoffset})
+        await self.stop_generator()
         data = pd.DataFrame(items)
         analog_low_ks, success1 = leastsq(lambda ks, low, high, y: y - self._analog_map_func(ks, low, high), self.analog_low_ks,
                                           args=(data.analog_low, data.analog_high, data.low))
-        if success1:
-            self.analog_low_ks = tuple(analog_low_ks)
         analog_high_ks, success2 = leastsq(lambda ks, low, high, y: y - self._analog_map_func(ks, low, high), self.analog_high_ks,
                                            args=(data.analog_low, data.analog_high, data.high))
-        if success2:
+        if success1 in range(1, 5) and success2 in range(1, 5):
+            self.analog_low_ks = tuple(analog_low_ks)
             self.analog_high_ks = tuple(analog_high_ks)
-        await self.stop_generator()
-        return success1 and success2
+            self.analog_offsets = {'A': -data.offset.mean(), 'B': +data.offset.mean()}
+            return True
+        else:
+            return False
 
 
 import numpy as np
@@ -291,7 +303,7 @@ async def main():
     s = await Scope.connect()
     x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
     y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
-    await s.start_generator(1000, waveform='sawtooth') #wavetable=y)
+    await s.start_generator(1000, wavetable=y)
     #if await s.calibrate():
     #    await s.save_params()
 
@@ -301,6 +313,6 @@ def capture(*args, **kwargs):
 if __name__ == '__main__':
     import logging
     import sys
-    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 
