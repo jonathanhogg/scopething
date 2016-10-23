@@ -23,19 +23,22 @@ class Scope(vm.VirtualMachine):
             scope = cls(streams.SerialStream())
         elif os.path.exists(device):
             scope = cls(streams.SerialStream(device=device))
+        elif ':' in device:
+            host, port = device.split(':', 1)
+            Log.info("Connecting to remote scope at {}:{}".format(host, port))
+            reader, writer = await asyncio.open_connection(host, int(port))
+            scope = cls(reader, writer)
         else:
             raise ValueError("Don't know what to do with '{}'".format(device))
         await scope.setup()
         return scope
-
-    def __init__(self, stream):
-        super(Scope, self).__init__(stream)
 
     @staticmethod
     def _analog_map_func(ks, low, high):
          return ks[0] + ks[1]*low + ks[2]*high
 
     async def setup(self):
+        Log.info("Resetting scope")
         await self.reset()
         await self.issue_get_revision()
         revision = ((await self.read_replies(2))[1]).decode('ascii')
@@ -57,6 +60,14 @@ class Scope(vm.VirtualMachine):
         #await self.load_params()  XXX switch this off until I understand EEPROM better
         self._generator_running = False
         Log.info("Initialised scope, revision: {}".format(revision))
+
+    def close(self):
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+            self._reader = None
+
+    __del__ = close
 
     async def load_params(self):
         params = []
@@ -200,7 +211,7 @@ class Scope(vm.VirtualMachine):
                                          DumpCount=nsamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
                 await self.issue_program_spock_registers()
                 await self.issue_analog_dump_binary()
-            data = await self._stream.readexactly(nsamples * sample_width)
+            data = await self._reader.readexactly(nsamples * sample_width)
             if sample_width == 2:
                 if raw:
                     trace = [(value / 65536 + 0.5) for value in struct.unpack('>{}h'.format(nsamples), data)]
@@ -323,7 +334,6 @@ class Scope(vm.VirtualMachine):
 
 
 import numpy as np
-import pandas as pd
 
 async def main():
     global s, x, y, data
@@ -338,10 +348,13 @@ async def main():
     #    await s.save_params()
 
 def capture(*args, **kwargs):
-    return pd.DataFrame(asyncio.get_event_loop().run_until_complete(s.capture(*args, **kwargs)))
+    return asyncio.get_event_loop().run_until_complete(s.capture(*args, **kwargs))
+
+def calibrate(*args, **kwargs):
+    return asyncio.get_event_loop().run_until_complete(s.calibrate(*args, **kwargs))
 
 if __name__ == '__main__':
     import sys
-    #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 

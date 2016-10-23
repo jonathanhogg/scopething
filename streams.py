@@ -3,7 +3,6 @@ import asyncio
 import logging
 import os
 import serial
-import serial.tools.list_ports
 
 
 Log = logging.getLogger('streams')
@@ -11,12 +10,8 @@ Log = logging.getLogger('streams')
 
 class SerialStream:
 
-    @staticmethod
-    def available_ports():
-        return [port.device for port in serial.tools.list_ports.comports() if port.usb_description() == 'FT245R USB FIFO']
-
-    def __init__(self, port=0, device=None, loop=None, **kwargs):
-        self._device = self.available_ports()[port] if device is None else device
+    def __init__(self, device, loop=None, **kwargs):
+        self._device = device
         self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._input_buffer = bytes()

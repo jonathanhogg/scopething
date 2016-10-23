@@ -194,8 +194,9 @@ class VirtualMachine:
                 await self._vm.issue(self._data)
             return False
 
-    def __init__(self, stream):
-        self._stream = stream
+    def __init__(self, reader, writer):
+        self._reader = reader
+        self._writer = writer
         self._transactions = []
 
     def transaction(self):
@@ -205,26 +206,39 @@ class VirtualMachine:
         if isinstance(cmd, str):
             cmd = cmd.encode('ascii')
         if not self._transactions:
-            await self._stream.write(cmd)
-            echo = await self._stream.readexactly(len(cmd))
+            Log.debug("Issue: {}".format(repr(cmd)))
+            self._writer.write(cmd)
+            await self._writer.drain()
+            echo = await self._reader.readexactly(len(cmd))
             if echo != cmd:
                 raise RuntimeError("Mismatched response")
         else:
             self._transactions[-1].append(cmd)
+
+    async def readuntil(self, separator):
+        data = b''
+        while not data.endswith(separator):
+            data += await self._reader.read(1)
+        return data
 
     async def read_replies(self, n):
         if self._transactions:
             raise TypeError("Command transaction in progress")
         replies = []
         for i in range(n):
-            replies.append((await self._stream.readuntil(b'\r'))[:-1])
+            reply = (await self.readuntil(b'\r'))[:-1]
+            Log.debug("Read reply: {}".format(repr(reply)))
+            replies.append(reply)
         return replies
 
     async def reset(self):
         if self._transactions:
             raise TypeError("Command transaction in progress")
-        await self._stream.write(b'!')
-        await self._stream.readuntil(b'!')
+        Log.debug("Issue reset")
+        self._writer.write(b'!')
+        await self._writer.drain()
+        await self.readuntil(b'!')
+        Log.debug("Reset complete")
 
     async def set_registers(self, **kwargs):
         cmd = ''
