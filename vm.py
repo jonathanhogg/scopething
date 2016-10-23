@@ -1,5 +1,6 @@
 
 import asyncio
+from enum import IntEnum
 import logging
 import struct
 
@@ -82,8 +83,7 @@ Registers = {
     "MasterClockM": (0xf8, 'U16', "PLL multiplier (MUL M)"),
 }
 
-
-class TraceMode:
+class TraceMode(IntEnum):
     Analog         =  0
     AnalogFast     =  4
     AnalogShot     = 11
@@ -102,8 +102,7 @@ class TraceMode:
     Macro          = 18
     MacroChop      = 19
 
-
-class BufferMode:
+class BufferMode(IntEnum):
     Single    = 0
     Chop      = 1
     Dual      = 2
@@ -111,7 +110,7 @@ class BufferMode:
     Macro     = 4
     MacroChop = 5
 
-class DumpMode:
+class DumpMode(IntEnum):
     Raw    = 0
     Burst  = 1
     Summed = 2
@@ -121,7 +120,7 @@ class DumpMode:
     Filter = 6
     Span   = 7
 
-class SpockOption:
+class SpockOption(IntEnum):
     TriggerInvert                 = 0x40
     TriggerSourceA                = 0x04 * 0
     TriggerSourceB                = 0x04 * 1
@@ -129,11 +128,11 @@ class SpockOption:
     TriggerTypeSampledAnalog      = 0x01 * 0
     TriggerTypeHardwareComparator = 0x01 * 1
 
-class KitchenSinkA:
+class KitchenSinkA(IntEnum):
     ChannelAComparatorEnable = 0x80
     ChannelBComparatorEnable = 0x40
 
-class KitchenSinkB:
+class KitchenSinkB(IntEnum):
     AnalogFilterEnable       = 0x80
     WaveformGeneratorEnable  = 0x40
 

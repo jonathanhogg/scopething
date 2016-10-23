@@ -1,6 +1,9 @@
+#!/usr/bin/env python3
 
+import argparse
 import asyncio
 import logging
+import os
 import struct
 
 import streams
@@ -15,8 +18,13 @@ class Scope(vm.VirtualMachine):
     PARAMS_MAGIC = 0xb0b2
 
     @classmethod
-    async def connect(cls, stream=None):
-        scope = cls(stream if stream is not None else streams.SerialStream())
+    async def connect(cls, device=None):
+        if device is None:
+            scope = cls(streams.SerialStream())
+        elif os.path.exists(device):
+            scope = cls(streams.SerialStream(device=device))
+        else:
+            raise ValueError("Don't know what to do with '{}'".format(device))
         await scope.setup()
         return scope
 
@@ -223,7 +231,6 @@ class Scope(vm.VirtualMachine):
                 error = abs(frequency - actualf) / frequency
                 if error < max_error:
                     possible_params.append(((error == 0, width), (size, nwaves, clock, actualf)))
-            clock += 1
         if not possible_params:
             raise ValueError("No solution to required frequency/min_samples/max_error")
         size, nwaves, clock, actualf = sorted(possible_params)[-1][1]
@@ -281,7 +288,6 @@ class Scope(vm.VirtualMachine):
     async def calibrate(self, n=33):
         global data
         import numpy as np
-        import pandas as pd
         from scipy.optimize import leastsq, least_squares
         items = []
         await self.start_generator(1000, waveform='square')
@@ -298,18 +304,18 @@ class Scope(vm.VirtualMachine):
                 analog_range = 3.3 / ((A3v3 + B3v3)/2 - zero)
                 analog_low = -zero * analog_range
                 analog_high = analog_low + analog_range
-                ABoffset = (Azero - Bzero) / 2 * analog_range
-                items.append({'low': low, 'high': high, 'analog_low': analog_low, 'analog_high': analog_high, 'offset': ABoffset})
+                offset = (Azero - Bzero) / 2 * analog_range
+                items.append((analog_low, analog_high, low, high, offset))
         await self.stop_generator()
-        data = pd.DataFrame(items)
+        items = np.array(items)
         def f(params, analog_low, analog_high, low, high):
             lo, hi = self.calculate_lo_hi(analog_low, analog_high, params)
             return np.sqrt((low - lo) ** 2 + (high - hi) ** 2)
-        result = least_squares(f, self.analog_params, args=(data.analog_low, data.analog_high, data.low, data.high),
-                                  bounds=([0, -np.inf, 250, 0, 0], [np.inf, np.inf, 350, np.inf, np.inf]))
+        result = least_squares(f, self.analog_params, args=items.T[:4], bounds=([0, -np.inf, 250, 0, 0], [np.inf, np.inf, 350, np.inf, np.inf]))
         if result.success in range(1, 5):
             self.analog_params = tuple(result.x)
-            self.analog_offsets = {'A': -data.offset.mean(), 'B': +data.offset.mean()}
+            offset = items[:,4].mean()
+            self.analog_offsets = {'A': -offset, 'B': +offset}
         else:
             Log.warning("Calibration failed: {}".format(result.message))
             print(result.message)
@@ -321,7 +327,10 @@ import pandas as pd
 
 async def main():
     global s, x, y, data
-    s = await Scope.connect(streams.SerialStream(device='/Users/jonathan/test'))
+    parser = argparse.ArgumentParser(description="scopething")
+    parser.add_argument('device', type=str, help="Device to connect to")
+    args = parser.parse_args()
+    s = await Scope.connect(args.device)
     x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
     y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
     await s.start_generator(1000, wavetable=y)
@@ -332,8 +341,7 @@ def capture(*args, **kwargs):
     return pd.DataFrame(asyncio.get_event_loop().run_until_complete(s.capture(*args, **kwargs)))
 
 if __name__ == '__main__':
-    import logging
     import sys
-    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    #logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 
