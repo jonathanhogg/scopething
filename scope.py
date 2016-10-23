@@ -35,7 +35,7 @@ class Scope(vm.VirtualMachine):
 
     @staticmethod
     def _analog_map_func(ks, low, high):
-         return ks[0] + ks[1]*low + ks[2]*high
+        return ks[0] + ks[1]*low + ks[2]*high
 
     async def setup(self):
         Log.info("Resetting scope")
@@ -57,7 +57,7 @@ class Scope(vm.VirtualMachine):
             self.trigger_timeout_tick = 6.4e-6
             self.trigger_low = -7.517
             self.trigger_high = 10.816
-        #await self.load_params()  XXX switch this off until I understand EEPROM better
+        # await self.load_params()  XXX switch this off until I understand EEPROM better
         self._generator_running = False
         Log.info("Initialised scope, revision: {}".format(revision))
 
@@ -75,14 +75,13 @@ class Scope(vm.VirtualMachine):
             params.append(await self.read_eeprom(i+70))
         params = struct.unpack('<H8fH', bytes(params))
         if params[0] == self.PARAMS_MAGIC and params[-1] == self.PARAMS_MAGIC:
-            self.analog_low_ks = tuple(params[1:4])
-            self.analog_high_ks = tuple(params[4:7])
+            self.analog_params = tuple(params[1:7])
             self.analog_offsets['A'] = params[8]
             self.analog_offsets['B'] = params[9]
 
     async def save_params(self):
-        params = struct.pack('<H8fH', self.PARAMS_MAGIC, *self.analog_low_ks, *self.analog_high_ks,
-                                      self.analog_offsets['A'], self.analog_offsets['B'], self.PARAMS_MAGIC)
+        params = struct.pack('<H8fH', self.PARAMS_MAGIC, *self.analog_params,
+                             self.analog_offsets['A'], self.analog_offsets['B'], self.PARAMS_MAGIC)
         for i, byte in enumerate(params):
             await self.write_eeprom(i+70, byte)
 
@@ -99,60 +98,26 @@ class Scope(vm.VirtualMachine):
         return dl, dh
 
     async def capture(self, channels=['A'], trigger_channel=None, trigger_level=0, trigger_type='rising', hair_trigger=False,
-                            period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False):
+                      period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False):
         if 'A' in channels and 'B' in channels:
             nsamples_multiplier = 2
+            dual = True
         else:
             nsamples_multiplier = 1
+            dual = False
         ticks = int(period / nsamples / nsamples_multiplier / self.capture_clock_period)
-        if ticks >= 20 and ticks < 65536:
-            sample_width = 2
-            buffer_width = 6*1024
-            dump_mode = vm.DumpMode.Native
-            if 'A' in channels and 'B' in channels:
-                trace_mode = vm.TraceMode.MacroChop
-                buffer_mode = vm.BufferMode.MacroChop
-            else:
-                trace_mode = vm.TraceMode.Macro
-                buffer_mode = vm.BufferMode.Macro
-        elif ticks >= 15 and ticks < 40:
-            sample_width = 1
-            buffer_width = 12*1024
-            dump_mode = vm.DumpMode.Raw
-            if 'A' in channels and 'B' in channels:
-                trace_mode = vm.TraceMode.AnalogChop
-                buffer_mode = vm.BufferMode.Chop
-            else:
-                trace_mode = vm.TraceMode.Analog
-                buffer_mode = vm.BufferMode.Single
-        elif ticks >= 8 and ticks < 15:
-            sample_width = 1
-            buffer_width = 12*1024
-            dump_mode = vm.DumpMode.Raw
-            if 'A' in channels and 'B' in channels:
-                trace_mode = vm.TraceMode.AnalogFastChop
-                buffer_mode = vm.BufferMode.Chop
-            else:
-                trace_mode = vm.TraceMode.AnalogFast
-                buffer_mode = vm.BufferMode.Single
-        elif ticks >= 2 and ticks < 8:
-            if ticks > 5:
-                ticks = 5
-            sample_width = 1
-            buffer_width = 12*1024
-            dump_mode = vm.DumpMode.Raw
-            if 'A' in channels and 'B' in channels:
-                trace_mode = vm.TraceMode.AnalogShotChop
-                buffer_mode = vm.BufferMode.Chop
-            else:
-                trace_mode = vm.TraceMode.AnalogShot
-                buffer_mode = vm.BufferMode.Single
+        for clock_mode in vm.ClockModes:
+            if clock_mode.dual == dual and ticks in range(clock_mode.clock_low, clock_mode.clock_high + 1):
+                break
         else:
             raise RuntimeError("Unsupported clock period: {}".format(ticks))
+        if clock_mode.clock_max is not None and ticks > clock_mode.clock_max:
+            ticks = clock_mode.clock_max
         nsamples = int(round(period / ticks / nsamples_multiplier / self.capture_clock_period))
         total_samples = nsamples * nsamples_multiplier
+        buffer_width = self.capture_buffer_size // clock_mode.sample_width
         assert total_samples <= buffer_width
-
+        
         if raw:
             lo, hi = low, high
         else:
@@ -188,7 +153,8 @@ class Scope(vm.VirtualMachine):
             analog_enable |= 2
 
         async with self.transaction():
-            await self.set_registers(TraceMode=trace_mode, BufferMode=buffer_mode, SampleAddress=0, ClockTicks=ticks, ClockScale=1,
+            await self.set_registers(TraceMode=clock_mode.TraceMode, BufferMode=clock_mode.BufferMode,
+                                     SampleAddress=0, ClockTicks=ticks, ClockScale=1,
                                      TraceIntro=total_samples//2, TraceOutro=total_samples//2, TraceDelay=0,
                                      Timeout=int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick)),
                                      TriggerMask=0x7f, TriggerLogic=0x80, TriggerLevel=trigger_level, SpockOption=spock_option,
@@ -206,13 +172,13 @@ class Scope(vm.VirtualMachine):
         traces = {}
         for dump_channel, channel in enumerate(sorted(channels)):
             async with self.transaction():
-                await self.set_registers(SampleAddress=(address - nsamples) * nsamples_multiplier % buffer_width, 
-                                         DumpMode=dump_mode, DumpChan=dump_channel,
+                await self.set_registers(SampleAddress=(address - nsamples) * nsamples_multiplier % buffer_width,
+                                         DumpMode=clock_mode.DumpMode, DumpChan=dump_channel,
                                          DumpCount=nsamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
                 await self.issue_program_spock_registers()
                 await self.issue_analog_dump_binary()
-            data = await self._reader.readexactly(nsamples * sample_width)
-            if sample_width == 2:
+            data = await self._reader.readexactly(nsamples * clock_mode.sample_width)
+            if clock_mode.sample_width == 2:
                 if raw:
                     trace = [(value / 65536 + 0.5) for value in struct.unpack('>{}h'.format(nsamples), data)]
                 else:
@@ -227,7 +193,7 @@ class Scope(vm.VirtualMachine):
         return traces
 
     async def start_generator(self, frequency, waveform='sine', wavetable=None, ratio=0.5, vpp=None, offset=0,
-                                    min_samples=50, max_error=1e-4):
+                              min_samples=50, max_error=1e-4):
         if vpp is None:
             vpp = self.awg_maximum_voltage
         possible_params = []
@@ -260,7 +226,7 @@ class Scope(vm.VirtualMachine):
                                      Ratio=nwaves * self.awg_wavetable_size / size,
                                      Index=0, Address=0, Size=size)
             await self.issue_translate_wavetable()
-            await self.set_registers(Cmd=2, Mode=0, Clock=clock, Modulo=size, 
+            await self.set_registers(Cmd=2, Mode=0, Clock=clock, Modulo=size,
                                      Mark=10, Space=1, Rest=0x7f00, Option=0x8004)
             await self.issue_control_waveform_generator()
             await self.set_registers(KitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
@@ -297,7 +263,6 @@ class Scope(vm.VirtualMachine):
             raise RuntimeError("Error writing EEPROM byte")
 
     async def calibrate(self, n=33):
-        global data
         import numpy as np
         from scipy.optimize import leastsq, least_squares
         items = []
@@ -325,7 +290,7 @@ class Scope(vm.VirtualMachine):
         result = least_squares(f, self.analog_params, args=items.T[:4], bounds=([0, -np.inf, 250, 0, 0], [np.inf, np.inf, 350, np.inf, np.inf]))
         if result.success in range(1, 5):
             self.analog_params = tuple(result.x)
-            offset = items[:,4].mean()
+            offset = items[:, 4].mean()
             self.analog_offsets = {'A': -offset, 'B': +offset}
         else:
             Log.warning("Calibration failed: {}".format(result.message))

@@ -1,5 +1,6 @@
 
 import asyncio
+from collections import namedtuple
 from enum import IntEnum
 import logging
 import struct
@@ -136,6 +137,19 @@ class KitchenSinkB(IntEnum):
     AnalogFilterEnable       = 0x80
     WaveformGeneratorEnable  = 0x40
 
+ClockMode = namedtuple('ClockMode', ('clock_low', 'clock_high', 'clock_max', 'dual', 'sample_width',
+                                     'TraceMode', 'BufferMode', 'DumpMode'))
+
+ClockModes = [
+    ClockMode(40, 65536, None, False, 2, TraceMode.Macro,          BufferMode.Macro,     DumpMode.Native),
+    ClockMode(40, 65536, None, True,  2, TraceMode.MacroChop,      BufferMode.MacroChop, DumpMode.Native),
+    ClockMode(15,    40, None, False, 1, TraceMode.Analog,         BufferMode.Single,    DumpMode.Raw),
+    ClockMode(13,    40, None, True,  1, TraceMode.AnalogChop,     BufferMode.Chop,      DumpMode.Raw),
+    ClockMode( 8,    14, None, False, 1, TraceMode.AnalogFast,     BufferMode.Single,    DumpMode.Raw),
+    ClockMode( 8,    40, None, True,  1, TraceMode.AnalogFastChop, BufferMode.Chop,      DumpMode.Raw),
+    ClockMode( 2,     8, 5,    False, 1, TraceMode.AnalogShot,     BufferMode.Single,    DumpMode.Raw),
+    ClockMode( 4,     8, 5,    True,  1, TraceMode.AnalogShotChop, BufferMode.Chop,      DumpMode.Raw),
+]
 
 def encode(value, dtype):
     sign = dtype[0]

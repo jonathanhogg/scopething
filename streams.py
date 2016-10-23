@@ -15,6 +15,8 @@ class SerialStream:
         self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._input_buffer = bytes()
+        self._output_buffer = bytes()
+        self._output_wait = None
 
     def __repr__(self):
         return '<{}:{}>'.format(self.__class__.__name__, self._device)
@@ -23,22 +25,25 @@ class SerialStream:
         self._connection.close()
         self._connection = None
 
-    async def write(self, data):
-        while data:
-            n = await self._write(data)
-            data = data[n:]
+    def write(self, data):
+        self._output_buffer += data
+        if self._output_wait is None:
+            self._output_wait = asyncio.Future()
+            self._loop.add_writer(self._connection, self._feed_data)
+        
+    async def drain(self):
+        if self._output_wait is not None:
+            await self._output_wait
 
-    def _write(self, data):
-        future = asyncio.Future()
-        self._loop.add_writer(self._connection, self._feed_data, data, future)
-        return future
-
-    def _feed_data(self, data, future):
-        n = self._connection.write(data)
-        Log.debug('Write {}'.format(repr(data[:n])))
-        future.set_result(n)
-        self._loop.remove_writer(self._connection)
-
+    def _feed_data(self):
+        n = self._connection.write(self._output_buffer)
+        Log.debug('Write {}'.format(repr(self._output_buffer[:n])))
+        self._output_buffer = self._output_buffer[n:]
+        if not self._output_buffer:
+            self._loop.remove_writer(self._connection)
+            self._output_wait.set_result(None)
+            self._output_wait = None
+        
     async def read(self, n=None):
         while True:
             if self._input_buffer:
