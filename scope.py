@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import math
 import os
 import struct
 
@@ -32,10 +33,6 @@ class Scope(vm.VirtualMachine):
             raise ValueError("Don't know what to do with '{}'".format(device))
         await scope.setup()
         return scope
-
-    @staticmethod
-    def _analog_map_func(ks, low, high):
-        return ks[0] + ks[1]*low + ks[2]*high
 
     async def setup(self):
         Log.info("Resetting scope")
@@ -173,17 +170,17 @@ class Scope(vm.VirtualMachine):
         for dump_channel, channel in enumerate(sorted(channels)):
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) * nsamples_multiplier % buffer_width,
-                                         DumpMode=clock_mode.DumpMode, DumpChan=dump_channel,
-                                         DumpCount=nsamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
+                                         DumpMode=vm.DumpMode.Native if clock_mode.sample_width == 2 else vm.DumpMode.Raw, 
+                                         DumpChan=dump_channel, DumpCount=nsamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
                 await self.issue_program_spock_registers()
                 await self.issue_analog_dump_binary()
             data = await self._reader.readexactly(nsamples * clock_mode.sample_width)
             if clock_mode.sample_width == 2:
+                data = struct.unpack('>{}h'.format(nsamples), data)
                 if raw:
-                    trace = [(value / 65536 + 0.5) for value in struct.unpack('>{}h'.format(nsamples), data)]
+                    trace = [(value / 65536 + 0.5) for value in data]
                 else:
-                    trace = [(value / 65536 + 0.5) * (high - low) + low + self.analog_offsets[channel]
-                             for value in struct.unpack('>{}h'.format(nsamples), data)]
+                    trace = [(value / 65536 + 0.5) * (high - low) + low + self.analog_offsets[channel] for value in data]
             else:
                 if raw:
                     trace = [value / 256 for value in data]
@@ -197,7 +194,7 @@ class Scope(vm.VirtualMachine):
         if vpp is None:
             vpp = self.awg_maximum_voltage
         possible_params = []
-        max_clock = int(round(1 / frequency / min_samples / self.awg_clock_period, 0))
+        max_clock = int(math.floor(1 / frequency / min_samples / self.awg_clock_period))
         for clock in range(self.awg_minimum_clock, max_clock+1):
             width = 1 / frequency / (clock * self.awg_clock_period)
             if width <= self.awg_sample_buffer_size:
@@ -221,8 +218,8 @@ class Scope(vm.VirtualMachine):
                     raise ValueError("Wavetable data must be {} samples".format(self.awg_wavetable_size))
                 await self.set_registers(Cmd=0, Mode=1, Address=0, Size=1)
                 await self.wavetable_write_bytes(wavetable)
-            await self.set_registers(Cmd=0, Mode=0, Level=vpp/self.awg_maximum_voltage,
-                                     Offset=2*offset/self.awg_maximum_voltage,
+            await self.set_registers(Cmd=0, Mode=0, Level=vpp / self.awg_maximum_voltage,
+                                     Offset=offset / self.awg_maximum_voltage,
                                      Ratio=nwaves * self.awg_wavetable_size / size,
                                      Index=0, Address=0, Size=size)
             await self.issue_translate_wavetable()

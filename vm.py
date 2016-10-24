@@ -49,7 +49,7 @@ Registers = {
     "Clock": (0x50, 'U16', "Sample (clock) period (ticks)"),
     "Modulo": (0x52, 'U16', "Modulo Size (generic)"),
     "Level": (0x54, 'U0.16', "Output (analog) attenuation (unsigned)"),
-    "Offset": (0x56, 'S1.15', "Output (analog) offset (signed)"),
+    "Offset": (0x56, 'S0.16', "Output (analog) offset (signed)"),
     "Mask": (0x58, 'U16', "Translate source modulo mask"),
     "Ratio": (0x5a, 'U16.16', "Translate command ratio (phase step)"),
     "Mark": (0x5e, 'U16', "Mark count/phase (ticks/step)"),
@@ -138,17 +138,17 @@ class KitchenSinkB(IntEnum):
     WaveformGeneratorEnable  = 0x40
 
 ClockMode = namedtuple('ClockMode', ('clock_low', 'clock_high', 'clock_max', 'dual', 'sample_width',
-                                     'TraceMode', 'BufferMode', 'DumpMode'))
+                                     'TraceMode', 'BufferMode'))
 
 ClockModes = [
-    ClockMode(40, 65536, None, False, 2, TraceMode.Macro,          BufferMode.Macro,     DumpMode.Native),
-    ClockMode(40, 65536, None, True,  2, TraceMode.MacroChop,      BufferMode.MacroChop, DumpMode.Native),
-    ClockMode(15,    40, None, False, 1, TraceMode.Analog,         BufferMode.Single,    DumpMode.Raw),
-    ClockMode(13,    40, None, True,  1, TraceMode.AnalogChop,     BufferMode.Chop,      DumpMode.Raw),
-    ClockMode( 8,    14, None, False, 1, TraceMode.AnalogFast,     BufferMode.Single,    DumpMode.Raw),
-    ClockMode( 8,    40, None, True,  1, TraceMode.AnalogFastChop, BufferMode.Chop,      DumpMode.Raw),
-    ClockMode( 2,     8, 5,    False, 1, TraceMode.AnalogShot,     BufferMode.Single,    DumpMode.Raw),
-    ClockMode( 4,     8, 5,    True,  1, TraceMode.AnalogShotChop, BufferMode.Chop,      DumpMode.Raw),
+    ClockMode(40, 65536, None, False, 2, TraceMode.Macro,          BufferMode.Macro),
+    ClockMode(40, 65536, None, True,  2, TraceMode.MacroChop,      BufferMode.MacroChop),
+    ClockMode(15,    40, None, False, 1, TraceMode.Analog,         BufferMode.Single),
+    ClockMode(13,    40, None, True,  1, TraceMode.AnalogChop,     BufferMode.Chop),
+    ClockMode( 8,    14, None, False, 1, TraceMode.AnalogFast,     BufferMode.Single),
+    ClockMode( 8,    40, None, True,  1, TraceMode.AnalogFastChop, BufferMode.Chop),
+    ClockMode( 2,     8, 5,    False, 1, TraceMode.AnalogShot,     BufferMode.Single),
+    ClockMode( 4,     8, 5,    True,  1, TraceMode.AnalogShotChop, BufferMode.Chop),
 ]
 
 def encode(value, dtype):
