@@ -14,6 +14,12 @@ import vm
 Log = logging.getLogger('scope')
 
 
+class DotDict(dict):
+    __getattr__ = dict.__getitem__
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+
 class Scope(vm.VirtualMachine):
 
     PARAMS_MAGIC = 0xb0b2
@@ -94,7 +100,7 @@ class Scope(vm.VirtualMachine):
         dh = (h*(2*ah + b) - ah*(l + 1)) / b
         return dl, dh
 
-    async def capture(self, channels=['A'], trigger_channel=None, trigger_level=0, trigger_type='rising', hair_trigger=False,
+    async def capture(self, channels=['A'], trigger_channel=None, trigger_level=None, trigger_type='rising', hair_trigger=False,
                       period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False):
         if 'A' in channels and 'B' in channels:
             nsamples_multiplier = 2
@@ -124,6 +130,8 @@ class Scope(vm.VirtualMachine):
                 high = self.analog_max
             lo, hi = self.calculate_lo_hi(low, high)
 
+        if trigger_level is None:
+            trigger_level = (high + low) / 2
         if trigger_channel is None:
             trigger_channel = channels[0]
         else:
@@ -166,7 +174,7 @@ class Scope(vm.VirtualMachine):
             if code != 2:
                 break
         address = int((await self.read_replies(1))[0], 16) // nsamples_multiplier
-        traces = {'t': [t*nsamples_multiplier*self.capture_clock_period for t in range(timestamp-nsamples*ticks, timestamp, ticks)]}
+        traces = DotDict({'t': [t*nsamples_multiplier*self.capture_clock_period for t in range(timestamp-nsamples*ticks, timestamp, ticks)]})
         for dump_channel, channel in enumerate(sorted(channels)):
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) * nsamples_multiplier % buffer_width,
@@ -295,7 +303,24 @@ class Scope(vm.VirtualMachine):
         return result.success
 
 
-import numpy as np
+"""
+$ ipython3 --pylab
+Using matplotlib backend: MacOSX
+
+In [1]: run scope
+INFO:scope:Resetting scope
+INFO:scope:Initialised scope, revision: BS000501
+
+In [2]: generate(2000, 'triangle')
+Out[2]: 2000.0
+
+In [3]: traces = capture('A', low=0, high=3.3)
+
+In [4]: plot(traces.t, traces.A)
+Out[4]: [<matplotlib.lines.Line2D at 0x114009160>]
+
+In [5]: 
+"""
 
 async def main():
     global s, x, y, data
@@ -303,11 +328,9 @@ async def main():
     parser.add_argument('device', nargs='?', default=None, type=str, help="Device to connect to")
     args = parser.parse_args()
     s = await Scope.connect(args.device)
-    x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
-    y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
-    await s.start_generator(1000, wavetable=y)
-    #if await s.calibrate():
-    #    await s.save_params()
+    #x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
+    #y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
+    #await s.start_generator(1000, wavetable=y)
 
 def capture(*args, **kwargs):
     return asyncio.get_event_loop().run_until_complete(s.capture(*args, **kwargs))
