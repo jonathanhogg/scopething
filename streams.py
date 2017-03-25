@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import serial
+from serial.tools.list_ports import comports
 
 
 Log = logging.getLogger('streams')
@@ -10,9 +11,16 @@ Log = logging.getLogger('streams')
 
 class SerialStream:
 
+    @classmethod
+    def stream_matching(cls, vid, pid, **kwargs):
+        for port in comports():
+            if port.vid == vid and port.pid == pid:
+                return SerialStream(port.device, **kwargs)
+
     def __init__(self, device, loop=None, **kwargs):
         self._device = device
         self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
+        Log.debug("Opened SerialStream on {}".format(device))
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._input_buffer = bytes()
         self._output_buffer = bytes()

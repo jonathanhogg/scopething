@@ -21,16 +21,16 @@ class Scope(vm.VirtualMachine):
     @classmethod
     async def connect(cls, device=None):
         if device is None:
-            scope = cls(streams.SerialStream())
+            reader = writer = streams.SerialStream.stream_matching(0x0403, 0x6001)
         elif os.path.exists(device):
-            scope = cls(streams.SerialStream(device=device))
+            reader = writer = streams.SerialStream(device=device)
         elif ':' in device:
             host, port = device.split(':', 1)
             Log.info("Connecting to remote scope at {}:{}".format(host, port))
             reader, writer = await asyncio.open_connection(host, int(port))
-            scope = cls(reader, writer)
         else:
             raise ValueError("Don't know what to do with '{}'".format(device))
+        scope = cls(reader, writer)
         await scope.setup()
         return scope
 
@@ -166,7 +166,7 @@ class Scope(vm.VirtualMachine):
             if code != 2:
                 break
         address = int((await self.read_replies(1))[0], 16) // nsamples_multiplier
-        traces = {}
+        traces = {'t': [t*nsamples_multiplier*self.capture_clock_period for t in range(timestamp-nsamples*ticks, timestamp, ticks)]}
         for dump_channel, channel in enumerate(sorted(channels)):
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) * nsamples_multiplier % buffer_width,
@@ -300,7 +300,7 @@ import numpy as np
 async def main():
     global s, x, y, data
     parser = argparse.ArgumentParser(description="scopething")
-    parser.add_argument('device', type=str, help="Device to connect to")
+    parser.add_argument('device', nargs='?', default=None, type=str, help="Device to connect to")
     args = parser.parse_args()
     s = await Scope.connect(args.device)
     x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
@@ -315,8 +315,11 @@ def capture(*args, **kwargs):
 def calibrate(*args, **kwargs):
     return asyncio.get_event_loop().run_until_complete(s.calibrate(*args, **kwargs))
 
+def generate(*args, **kwargs):
+    return asyncio.get_event_loop().run_until_complete(s.start_generator(*args, **kwargs))
+
 if __name__ == '__main__':
     import sys
-    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 
