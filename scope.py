@@ -174,7 +174,9 @@ class Scope(vm.VirtualMachine):
             if code != 2:
                 break
         address = int((await self.read_replies(1))[0], 16) // nsamples_multiplier
-        traces = DotDict({'t': [t*nsamples_multiplier*self.capture_clock_period for t in range(timestamp-nsamples*ticks, timestamp, ticks)]})
+        traces = DotDict()
+        if 't' in channels:
+            traces.t = [t*self.capture_clock_period for t in range(timestamp-total_samples*ticks, timestamp, ticks*nsamples_multiplier)]
         for dump_channel, channel in enumerate(sorted(channels)):
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) * nsamples_multiplier % buffer_width,
@@ -183,18 +185,13 @@ class Scope(vm.VirtualMachine):
                 await self.issue_program_spock_registers()
                 await self.issue_analog_dump_binary()
             data = await self._reader.readexactly(nsamples * clock_mode.sample_width)
+            value_multiplier, value_offset = (1, 0) if raw else ((high-low), low+self.analog_offsets[channel])
             if clock_mode.sample_width == 2:
                 data = struct.unpack('>{}h'.format(nsamples), data)
-                if raw:
-                    trace = [(value / 65536 + 0.5) for value in data]
-                else:
-                    trace = [(value / 65536 + 0.5) * (high - low) + low + self.analog_offsets[channel] for value in data]
+                traces[channel] = [(value/65536+0.5)*value_multiplier + value_offset for value in data]
             else:
-                if raw:
-                    trace = [value / 256 for value in data]
-                else:
-                    trace = [value / 256 * (high - low) + low + self.analog_offsets[channel] for value in data]
-            traces[channel] = trace
+                traces[channel] = [(value/256)*value_multiplier + value_offset for value in data]
+
         return traces
 
     async def start_generator(self, frequency, waveform='sine', wavetable=None, ratio=0.5, vpp=None, offset=0,
@@ -314,7 +311,7 @@ INFO:scope:Initialised scope, revision: BS000501
 In [2]: generate(2000, 'triangle')
 Out[2]: 2000.0
 
-In [3]: traces = capture('A', low=0, high=3.3)
+In [3]: traces = capture('tA', low=0, high=3.3)
 
 In [4]: plot(traces.t, traces.A)
 Out[4]: [<matplotlib.lines.Line2D at 0x114009160>]
