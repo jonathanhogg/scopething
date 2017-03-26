@@ -266,7 +266,7 @@ class Scope(vm.VirtualMachine):
 
     async def calibrate(self, n=33):
         import numpy as np
-        from scipy.optimize import leastsq, least_squares
+        from scipy.optimize import least_squares
         items = []
         await self.start_generator(1000, waveform='square')
         for low in np.linspace(0.063, 0.4, n):
