@@ -162,7 +162,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(TraceMode=clock_mode.TraceMode, BufferMode=clock_mode.BufferMode,
                                      SampleAddress=0, ClockTicks=ticks, ClockScale=1,
                                      TraceIntro=total_samples//2, TraceOutro=total_samples//2, TraceDelay=0,
-                                     Timeout=int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick)),
+                                     Timeout=max(1, int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick))),
                                      TriggerMask=0x7f, TriggerLogic=0x80, TriggerLevel=trigger_level, SpockOption=spock_option,
                                      TriggerIntro=trigger_intro, TriggerOutro=2 if hair_trigger else 4, Prelude=0,
                                      ConverterLo=lo, ConverterHi=hi,
@@ -345,6 +345,6 @@ def generate(*args, **kwargs):
 
 if __name__ == '__main__':
     import sys
-    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 

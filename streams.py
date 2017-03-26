@@ -22,7 +22,6 @@ class SerialStream:
         self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
         Log.debug(f"Opened SerialStream on {device}")
         self._loop = loop if loop is not None else asyncio.get_event_loop()
-        self._input_buffer = bytes()
         self._output_buffer = bytes()
         self._output_buffer_empty = None
 
@@ -52,20 +51,9 @@ class SerialStream:
             self._output_buffer_empty = self._loop.create_future()
             self._loop.add_writer(self._connection, self._feed_data)
 
-    async def send_break(self):
-        baudrate = self._connection.baudrate
-        await self.drain()
-        self._connection.baudrate = 600
-        self.write(b'\0')
-        await self.drain()
-        self._connection.baudrate = baudrate
-
     async def drain(self):
         if self._output_buffer_empty is not None:
             await self._output_buffer_empty
-        n = self._connection.out_waiting
-        if n:
-            await asyncio.sleep(n * 10 / self._connection.baudrate)
 
     def _feed_data(self):
         try:
@@ -75,7 +63,7 @@ class SerialStream:
         except Exception as e:
             Log.exception("Error writing to stream")
             self._output_buffer_empty.set_exception(e)
-            self.remove_writer(self._connection, self._feed_data)
+            self.remove_writer(self._connection)
         if n:
             Log.debug(f"Write {self._output_buffer[:n]!r}")
             self._output_buffer = self._output_buffer[n:]
@@ -86,46 +74,22 @@ class SerialStream:
         
     async def read(self, n=None):
         while True:
-            if self._input_buffer:
-                if n is None:
-                    data, self._input_buffer = self._input_buffer, bytes()
-                else:
-                    data, self._input_buffer = self._input_buffer[:n], self._input_buffer[n:]
+            w = self._connection.in_waiting
+            if w:
+                data = self._connection.read(w if n is None else min(n,w))
+                Log.debug(f"Read {data!r}")
                 return data
-            if n is None:
-                self._input_buffer += await self._read()
             else:
-                self._input_buffer += await self._read(n - len(self._input_buffer))
+                future = self._loop.create_future()
+                self._loop.add_reader(self._connection, future.set_result, None)
+                try:
+                    await future
+                finally:
+                    self._loop.remove_reader(self._connection)
 
     async def readexactly(self, n):
-        while True:
-            if len(self._input_buffer) >= n:
-                data, self._input_buffer = self._input_buffer[:n], self._input_buffer[n:]
-                return data
-            self._input_buffer += await self._read(n - len(self._input_buffer))
-
-    async def readuntil(self, separator):
-        while True:
-            index = self._input_buffer.find(separator)
-            if index >= 0:
-                index += len(separator)
-                data, self._input_buffer = self._input_buffer[:index], self._input_buffer[index:]
-                return data
-            self._input_buffer += await self._read()
-
-    async def _read(self, n=None):
-        future = self._loop.create_future()
-        self._loop.add_reader(self._connection, self._handle_data, n, future)
-        try:
-            data = await future
-            Log.debug(f"Read {data}")
-            return data
-        finally:
-            self._loop.remove_reader(self._connection)
-
-    def _handle_data(self, n, future):
-        if not future.cancelled():
-            data = self._connection.read(n if n is not None else self._connection.in_waiting)
-            future.set_result(data)
-
+        data = b''
+        while len(data) < n:
+            data += await self.read(n-len(data))
+        return data
 
