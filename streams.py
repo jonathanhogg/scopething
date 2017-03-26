@@ -20,18 +20,19 @@ class SerialStream:
     def __init__(self, device, loop=None, **kwargs):
         self._device = device
         self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
-        Log.debug("Opened SerialStream on {}".format(device))
+        Log.debug(f"Opened SerialStream on {device}")
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._input_buffer = bytes()
         self._output_buffer = bytes()
         self._output_buffer_empty = None
 
     def __repr__(self):
-        return '<{}:{}>'.format(self.__class__.__name__, self._device)
+        return f'<{self.__class__.__name__}:{self._device}>'
 
     def close(self):
-        self._connection.close()
-        self._connection = None
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
 
     def write(self, data):
         if not self._output_buffer:
@@ -43,7 +44,7 @@ class SerialStream:
                 Log.exception("Error writing to stream")
                 raise
             if n:
-                Log.debug('Write %r', data[:n])
+                Log.debug(f"Write {data[:n]!r}")
             self._output_buffer = data[n:]
         else:
             self._output_buffer += data
@@ -76,7 +77,7 @@ class SerialStream:
             self._output_buffer_empty.set_exception(e)
             self.remove_writer(self._connection, self._feed_data)
         if n:
-            Log.debug('Write %r', self._output_buffer[:n])
+            Log.debug(f"Write {self._output_buffer[:n]!r}")
             self._output_buffer = self._output_buffer[n:]
         if not self._output_buffer:
             self._loop.remove_writer(self._connection)
@@ -117,7 +118,7 @@ class SerialStream:
         self._loop.add_reader(self._connection, self._handle_data, n, future)
         try:
             data = await future
-            Log.debug('Read %r', data)
+            Log.debug(f"Read {data}")
             return data
         finally:
             self._loop.remove_reader(self._connection)

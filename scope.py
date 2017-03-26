@@ -32,10 +32,10 @@ class Scope(vm.VirtualMachine):
             reader = writer = streams.SerialStream(device=device)
         elif ':' in device:
             host, port = device.split(':', 1)
-            Log.info("Connecting to remote scope at {}:{}".format(host, port))
+            Log.info(f"Connecting to remote scope at {host}:{port}")
             reader, writer = await asyncio.open_connection(host, int(port))
         else:
-            raise ValueError("Don't know what to do with '{}'".format(device))
+            raise ValueError(f"Don't know what to do with '{device}'")
         scope = cls(reader, writer)
         await scope.setup()
         return scope
@@ -62,7 +62,7 @@ class Scope(vm.VirtualMachine):
             self.trigger_high = 10.816
         # await self.load_params()  XXX switch this off until I understand EEPROM better
         self._generator_running = False
-        Log.info("Initialised scope, revision: {}".format(revision))
+        Log.info(f"Initialised scope, revision: {revision}")
 
     def close(self):
         if self._writer is not None:
@@ -114,7 +114,7 @@ class Scope(vm.VirtualMachine):
             if clock_mode.dual == dual and ticks in range(clock_mode.clock_low, clock_mode.clock_high + 1):
                 break
         else:
-            raise RuntimeError("Unsupported clock period: {}".format(ticks))
+            raise RuntimeError(f"Unsupported clock period: {ticks}")
         if clock_mode.clock_max is not None and ticks > clock_mode.clock_max:
             ticks = clock_mode.clock_max
         nsamples = int(round(period / ticks / nsamples_multiplier / self.capture_clock_period))
@@ -189,7 +189,7 @@ class Scope(vm.VirtualMachine):
             data = await self._reader.readexactly(nsamples * clock_mode.sample_width)
             value_multiplier, value_offset = (1, 0) if raw else ((high-low), low+self.analog_offsets[channel])
             if clock_mode.sample_width == 2:
-                data = struct.unpack('>{}h'.format(nsamples), data)
+                data = struct.unpack(f'>{nsamples}h', data)
                 traces[channel] = [(value/65536+0.5)*value_multiplier + value_offset for value in data]
             else:
                 traces[channel] = [(value/256)*value_multiplier + value_offset for value in data]
@@ -222,7 +222,7 @@ class Scope(vm.VirtualMachine):
                 await self.issue_synthesize_wavetable()
             else:
                 if len(wavetable) != self.awg_wavetable_size:
-                    raise ValueError("Wavetable data must be {} samples".format(self.awg_wavetable_size))
+                    raise ValueError(f"Wavetable data must be {self.awg_wavetable_size} samples")
                 await self.set_registers(Cmd=0, Mode=1, Address=0, Size=1)
                 await self.wavetable_write_bytes(wavetable)
             await self.set_registers(Cmd=0, Mode=0, Level=vpp / self.awg_maximum_voltage,
@@ -297,7 +297,7 @@ class Scope(vm.VirtualMachine):
             offset = items[:, 4].mean()
             self.analog_offsets = {'A': -offset, 'B': +offset}
         else:
-            Log.warning("Calibration failed: {}".format(result.message))
+            Log.warning(f"Calibration failed: {result.message}")
             print(result.message)
         return result.success
 
@@ -313,7 +313,7 @@ INFO:scope:Initialised scope, revision: BS000501
 In [2]: generate(2000, 'triangle')
 Out[2]: 2000.0
 
-In [3]: traces = capture('At', low=0, high=3.3)
+In [3]: traces = capture('tA', low=0, high=3.3)
 
 In [4]: plot(traces.t, traces.A)
 Out[4]: [<matplotlib.lines.Line2D at 0x114009160>]
@@ -331,17 +331,20 @@ async def main():
     #y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
     #await s.start_generator(1000, wavetable=y)
 
+def await(g):
+    return asyncio.get_event_loop().run_until_complete(g)
+
 def capture(*args, **kwargs):
-    return asyncio.get_event_loop().run_until_complete(s.capture(*args, **kwargs))
+    return await(s.capture(*args, **kwargs))
 
 def calibrate(*args, **kwargs):
-    return asyncio.get_event_loop().run_until_complete(s.calibrate(*args, **kwargs))
+    return await(s.calibrate(*args, **kwargs))
 
 def generate(*args, **kwargs):
-    return asyncio.get_event_loop().run_until_complete(s.start_generator(*args, **kwargs))
+    return await(s.start_generator(*args, **kwargs))
 
 if __name__ == '__main__':
     import sys
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 

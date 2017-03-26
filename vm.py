@@ -220,7 +220,7 @@ class VirtualMachine:
         if isinstance(cmd, str):
             cmd = cmd.encode('ascii')
         if not self._transactions:
-            Log.debug("Issue: {}".format(repr(cmd)))
+            Log.debug(f"Issue: {cmd!r}")
             self._writer.write(cmd)
             await self._writer.drain()
             echo = await self._reader.readexactly(len(cmd))
@@ -241,7 +241,7 @@ class VirtualMachine:
         replies = []
         for i in range(n):
             reply = (await self.readuntil(b'\r'))[:-1]
-            Log.debug("Read reply: {}".format(repr(reply)))
+            Log.debug(f"Read reply: {reply!r}")
             replies.append(reply)
         return replies
 
@@ -260,27 +260,27 @@ class VirtualMachine:
         for base, name in sorted((Registers[name][0], name) for name in kwargs):
             base, dtype, desc = Registers[name]
             bs = encode(kwargs[name], dtype)
-            Log.debug("{} = 0x{}".format(name, ''.join('{:02x}'.format(b) for b in reversed(bs))))
+            Log.debug(f"{name} = 0x{''.join(f'{b:02x}' for b in reversed(bs))}")
             for i, byte in enumerate(bs):
                 if cmd:
                     cmd += 'z'
                     r1 += 1
                 address = base + i
                 if r1 is None or address > r1 + 3:
-                    cmd += '{:02x}@'.format(address)
+                    cmd += f'{address:02x}@'
                     r0 = r1 = address
                 else:
                     cmd += 'n' * (address - r1)
                     r1 = address
                 if byte != r0:
-                    cmd += '[' if byte == 0 else '{:02x}'.format(byte)
+                    cmd += '[' if byte == 0 else f'{byte:02x}'
                     r0 = byte
         if cmd:
             await self.issue(cmd + 's')
 
     async def get_register(self, name):
         base, dtype, desc = Registers[name]
-        await self.issue('{:02x}@p'.format(base))
+        await self.issue(f'{base:02x}@p')
         values = []
         width = calculate_width(dtype)
         for i in range(width):
@@ -324,7 +324,7 @@ class VirtualMachine:
         last_byte = None
         for byte in bs:
             if byte != last_byte:
-                cmd += '{:02x}'.format(byte)
+                cmd += f'{byte:02x}'
             cmd += 'W'
             last_byte = byte
         if cmd:
