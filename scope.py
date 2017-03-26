@@ -103,23 +103,30 @@ class Scope(vm.VirtualMachine):
     async def capture(self, channels=['A'], trigger_channel=None, trigger_level=None, trigger_type='rising', hair_trigger=False,
                       period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False):
         channels = list(channels)
-        if 'A' in channels and 'B' in channels:
-            nsamples_multiplier = 2
-            dual = True
-        else:
-            nsamples_multiplier = 1
-            dual = False
-        ticks = int(period / nsamples / nsamples_multiplier / self.capture_clock_period)
-        for clock_mode in vm.ClockModes:
-            if clock_mode.dual == dual and ticks in range(clock_mode.clock_low, clock_mode.clock_high + 1):
-                break
+        analog_channels = [channel for channel in channels if channel in {'A', 'B'}]
+        logic = 'L' in channels
+        ticks = int(period / nsamples / self.capture_clock_period)
+        for capture_mode in vm.CaptureModes:
+            if capture_mode.analog_channels == len(analog_channels) and capture_mode.logic_channels == logic:
+                if ticks in range(capture_mode.clock_low, capture_mode.clock_high + 1):
+                    clock_scale = 1
+                    break
+                elif capture_mode.clock_divide and ticks > capture_mode.clock_high:
+                    for clock_scale in range(2, 1<<16):
+                        test_ticks = int(period / nsamples / self.capture_clock_period / clock_scale)
+                        if test_ticks in range(capture_mode.clock_low, capture_mode.clock_high + 1):
+                            ticks = test_ticks
+                            break
+                    else:
+                        continue
+                    break
         else:
             raise RuntimeError(f"Unsupported clock period: {ticks}")
-        if clock_mode.clock_max is not None and ticks > clock_mode.clock_max:
-            ticks = clock_mode.clock_max
-        nsamples = int(round(period / ticks / nsamples_multiplier / self.capture_clock_period))
-        total_samples = nsamples * nsamples_multiplier
-        buffer_width = self.capture_buffer_size // clock_mode.sample_width
+        if capture_mode.clock_max is not None and ticks > capture_mode.clock_max:
+            ticks = capture_mode.clock_max
+        nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale))
+        total_samples = nsamples*2 if logic else nsamples
+        buffer_width = self.capture_buffer_size // capture_mode.sample_width
         assert total_samples <= buffer_width
         
         if raw:
@@ -144,6 +151,8 @@ class Scope(vm.VirtualMachine):
         elif trigger_channel == 'B':
             kitchen_sink_a = vm.KitchenSinkA.ChannelBComparatorEnable
             spock_option |= vm.SpockOption.TriggerSourceB
+        else:
+            raise RuntimeError(f"Cannot trigger on channel {trigger_channel}")
         kitchen_sink_b = vm.KitchenSinkB.AnalogFilterEnable
         if self._generator_running:
             kitchen_sink_b |= vm.KitchenSinkB.WaveformGeneratorEnable
@@ -157,16 +166,21 @@ class Scope(vm.VirtualMachine):
             analog_enable |= 1
         if 'B' in channels:
             analog_enable |= 2
+        logic_enable = 0
+        for channel in range(8):
+            if not ((channel == 4 and self._generator_running) or (channel == 6 and 'A' in channels) or (channel == 7 and 'B' in channels)):
+                logic_enable |= 1<<channel
 
         async with self.transaction():
-            await self.set_registers(TraceMode=clock_mode.TraceMode, BufferMode=clock_mode.BufferMode,
-                                     SampleAddress=0, ClockTicks=ticks, ClockScale=1,
-                                     TraceIntro=total_samples//2, TraceOutro=total_samples//2, TraceDelay=0,
+            await self.set_registers(TraceMode=capture_mode.TraceMode, BufferMode=capture_mode.BufferMode,
+                                     SampleAddress=0, ClockTicks=ticks, ClockScale=clock_scale,
+                                     TraceIntro=nsamples//2, TraceOutro=nsamples//2, TraceDelay=0,
                                      Timeout=max(1, int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick))),
                                      TriggerMask=0x7f, TriggerLogic=0x80, TriggerLevel=trigger_level, SpockOption=spock_option,
                                      TriggerIntro=trigger_intro, TriggerOutro=2 if hair_trigger else 4, Prelude=0,
                                      ConverterLo=lo, ConverterHi=hi,
-                                     KitchenSinkA=kitchen_sink_a, KitchenSinkB=kitchen_sink_b, AnalogEnable=analog_enable)
+                                     KitchenSinkA=kitchen_sink_a, KitchenSinkB=kitchen_sink_b, 
+                                     AnalogEnable=analog_enable, DigitalEnable=logic_enable)
             await self.issue_program_spock_registers()
             await self.issue_configure_device_hardware()
             await self.issue_triggered_trace()
@@ -174,25 +188,42 @@ class Scope(vm.VirtualMachine):
             code, timestamp = (int(x, 16) for x in await self.read_replies(2))
             if code != 2:
                 break
-        address = int((await self.read_replies(1))[0], 16) // nsamples_multiplier
+        start_timestamp = timestamp - nsamples*ticks*clock_scale
+        if start_timestamp < 0:
+            start_timestamp += 1<<32
+            timestamp += 1<<32
+        address = int((await self.read_replies(1))[0], 16)
         traces = DotDict()
-        if 't' in channels:
-            traces.t = [t*self.capture_clock_period for t in range(timestamp-total_samples*ticks, timestamp, ticks*nsamples_multiplier)]
-            channels.remove('t')
-        for dump_channel, channel in enumerate(sorted(channels)):
+        for dump_channel, channel in enumerate(sorted(analog_channels)):
+            asamples = nsamples // len(analog_channels)
             async with self.transaction():
-                await self.set_registers(SampleAddress=(address - nsamples) * nsamples_multiplier % buffer_width,
-                                         DumpMode=vm.DumpMode.Native if clock_mode.sample_width == 2 else vm.DumpMode.Raw, 
-                                         DumpChan=dump_channel, DumpCount=nsamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
+                await self.set_registers(SampleAddress=(address - total_samples) % buffer_width,
+                                         DumpMode=vm.DumpMode.Native if capture_mode.sample_width == 2 else vm.DumpMode.Raw, 
+                                         DumpChan=dump_channel, DumpCount=asamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
                 await self.issue_program_spock_registers()
                 await self.issue_analog_dump_binary()
-            data = await self._reader.readexactly(nsamples * clock_mode.sample_width)
+            data = await self._reader.readexactly(asamples * capture_mode.sample_width)
             value_multiplier, value_offset = (1, 0) if raw else ((high-low), low+self.analog_offsets[channel])
-            if clock_mode.sample_width == 2:
-                data = struct.unpack(f'>{nsamples}h', data)
-                traces[channel] = [(value/65536+0.5)*value_multiplier + value_offset for value in data]
+            if capture_mode.sample_width == 2:
+                data = struct.unpack(f'>{asamples}h', data)
+                data = [(value/65536+0.5)*value_multiplier + value_offset for value in data]
             else:
-                traces[channel] = [(value/256)*value_multiplier + value_offset for value in data]
+                data = [(value/256)*value_multiplier + value_offset for value in data]
+            traces[channel] = {(t+dump_channel*ticks*clock_scale)*self.capture_clock_period: value
+                               for (t, value) in zip(range(start_timestamp, timestamp, ticks*clock_scale*len(analog_channels)), data)}
+
+        if logic:
+            async with self.transaction():
+                await self.set_registers(SampleAddress=(address - total_samples) % buffer_width,
+                                         DumpMode=vm.DumpMode.Raw, DumpChan=128, DumpCount=nsamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
+                await self.issue_program_spock_registers()
+                await self.issue_analog_dump_binary()
+            data = await self._reader.readexactly(nsamples)
+            ts = [t*self.capture_clock_period for t in range(start_timestamp, timestamp, ticks*clock_scale)]
+            for i in range(8):
+                mask = 1<<i
+                if logic_enable & mask:
+                    traces[f'L{i}'] = {t: 1 if value & mask else 0 for (t, value) in zip(ts, data)}
 
         return traces
 
@@ -273,10 +304,10 @@ class Scope(vm.VirtualMachine):
         await self.start_generator(1000, waveform='square')
         for low in np.linspace(0.063, 0.4, n):
             for high in np.linspace(0.877, 0.6, n):
-                data = await self.capture(channels='AB', period=2e-3, trigger_level=0.5, nsamples=1000, low=low, high=high, raw=True)
-                A = np.array(data['A'])
+                data = await self.capture(channels='AB', period=2e-3, trigger_level=0.5, nsamples=2000, low=low, high=high, raw=True)
+                A = np.fromiter(data['A'].values(), dtype='float')
                 A.sort()
-                B = np.array(data['B'])
+                B = np.fromiter(data['B'].values(), dtype='float')
                 B.sort()
                 Azero, A3v3 = A[10:490].mean(), A[510:990].mean()
                 Bzero, B3v3 = B[10:490].mean(), B[510:990].mean()
@@ -313,9 +344,9 @@ INFO:scope:Initialised scope, revision: BS000501
 In [2]: generate(2000, 'triangle')
 Out[2]: 2000.0
 
-In [3]: traces = capture('tA', low=0, high=3.3)
+In [3]: traces = capture('A', low=0, high=3.3)
 
-In [4]: plot(traces.t, traces.A)
+In [4]: plot(traces.A.keys(), traces.A.values())
 Out[4]: [<matplotlib.lines.Line2D at 0x114009160>]
 
 In [5]: 
@@ -345,6 +376,6 @@ def generate(*args, **kwargs):
 
 if __name__ == '__main__':
     import sys
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 

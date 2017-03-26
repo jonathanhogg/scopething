@@ -137,18 +137,27 @@ class KitchenSinkB(IntEnum):
     AnalogFilterEnable       = 0x80
     WaveformGeneratorEnable  = 0x40
 
-ClockMode = namedtuple('ClockMode', ('clock_low', 'clock_high', 'clock_max', 'dual', 'sample_width',
-                                     'TraceMode', 'BufferMode'))
+CaptureMode = namedtuple('CaptureMode', ('clock_low', 'clock_high', 'clock_max', 'analog_channels', 'sample_width',
+                                         'logic_channels', 'clock_divide', 'TraceMode', 'BufferMode'))
 
-ClockModes = [
-    ClockMode(40, 65536, None, False, 2, TraceMode.Macro,          BufferMode.Macro),
-    ClockMode(40, 65536, None, True,  2, TraceMode.MacroChop,      BufferMode.MacroChop),
-    ClockMode(15,    40, None, False, 1, TraceMode.Analog,         BufferMode.Single),
-    ClockMode(13,    40, None, True,  1, TraceMode.AnalogChop,     BufferMode.Chop),
-    ClockMode( 8,    14, None, False, 1, TraceMode.AnalogFast,     BufferMode.Single),
-    ClockMode( 8,    40, None, True,  1, TraceMode.AnalogFastChop, BufferMode.Chop),
-    ClockMode( 2,     8, 5,    False, 1, TraceMode.AnalogShot,     BufferMode.Single),
-    ClockMode( 4,     8, 5,    True,  1, TraceMode.AnalogShotChop, BufferMode.Chop),
+CaptureModes = [
+    CaptureMode(40, 65536, None, 1, 2, False, False, TraceMode.Macro,          BufferMode.Macro),
+    CaptureMode(40, 65536, None, 2, 2, False, False, TraceMode.MacroChop,      BufferMode.MacroChop),
+    CaptureMode(15,    40, None, 1, 1, False, True,  TraceMode.Analog,         BufferMode.Single),
+    CaptureMode(13,    40, None, 2, 1, False, True,  TraceMode.AnalogChop,     BufferMode.Chop),
+    CaptureMode( 8,    14, None, 1, 1, False, False, TraceMode.AnalogFast,     BufferMode.Single),
+    CaptureMode( 8,    40, None, 2, 1, False, False, TraceMode.AnalogFastChop, BufferMode.Chop),
+    CaptureMode( 2,     7, 5,    1, 1, False, False, TraceMode.AnalogShot,     BufferMode.Single),
+    CaptureMode( 4,     7, 5,    2, 1, False, False, TraceMode.AnalogShotChop, BufferMode.Chop),
+    CaptureMode( 5, 16384, None, 0, 1, True,  False, TraceMode.Logic,          BufferMode.Single),
+    CaptureMode( 4,     4, None, 0, 1, True,  False, TraceMode.LogicFast,      BufferMode.Single),
+    CaptureMode( 1,     3, None, 0, 1, True,  False, TraceMode.LogicShot,      BufferMode.Single),
+    CaptureMode(15,    40, None, 1, 1, True,  True,  TraceMode.Mixed,          BufferMode.Dual),
+    CaptureMode(13,    40, None, 2, 1, True,  True,  TraceMode.MixedChop,      BufferMode.ChopDual),
+    CaptureMode( 8,    14, None, 1, 1, True,  False, TraceMode.MixedFast,      BufferMode.Dual),
+    CaptureMode( 8,    40, None, 2, 1, True,  False, TraceMode.MixedFastChop,  BufferMode.ChopDual),
+    CaptureMode( 2,     7, 5,    1, 1, True,  False, TraceMode.MixedShot,      BufferMode.Dual),
+    CaptureMode( 4,     7, 5,    2, 1, True,  False, TraceMode.MixedShotChop,  BufferMode.ChopDual),
 ]
 
 def encode(value, dtype):
