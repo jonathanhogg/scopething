@@ -102,6 +102,7 @@ class Scope(vm.VirtualMachine):
 
     async def capture(self, channels=['A'], trigger_channel=None, trigger_level=None, trigger_type='rising', hair_trigger=False,
                       period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False):
+        channels = list(channels)
         if 'A' in channels and 'B' in channels:
             nsamples_multiplier = 2
             dual = True
@@ -133,7 +134,7 @@ class Scope(vm.VirtualMachine):
         if trigger_level is None:
             trigger_level = (high + low) / 2
         if trigger_channel is None:
-            trigger_channel = channels[0]
+            trigger_channel = [channel for channel in channels if channel != 't'][0]
         else:
             assert trigger_channel in channels
         spock_option = vm.SpockOption.TriggerTypeHardwareComparator
@@ -177,6 +178,7 @@ class Scope(vm.VirtualMachine):
         traces = DotDict()
         if 't' in channels:
             traces.t = [t*self.capture_clock_period for t in range(timestamp-total_samples*ticks, timestamp, ticks*nsamples_multiplier)]
+            channels.remove('t')
         for dump_channel, channel in enumerate(sorted(channels)):
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) * nsamples_multiplier % buffer_width,
@@ -311,7 +313,7 @@ INFO:scope:Initialised scope, revision: BS000501
 In [2]: generate(2000, 'triangle')
 Out[2]: 2000.0
 
-In [3]: traces = capture('tA', low=0, high=3.3)
+In [3]: traces = capture('At', low=0, high=3.3)
 
 In [4]: plot(traces.t, traces.A)
 Out[4]: [<matplotlib.lines.Line2D at 0x114009160>]
