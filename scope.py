@@ -138,29 +138,9 @@ class Scope(vm.VirtualMachine):
                 high = self.analog_max
             lo, hi = self.calculate_lo_hi(low, high)
 
-        if trigger_level is None:
-            trigger_level = (high + low) / 2
-        if trigger_channel is None:
-            trigger_channel = [channel for channel in channels if channel != 't'][0]
-        else:
-            assert trigger_channel in channels
-        spock_option = vm.SpockOption.TriggerTypeHardwareComparator
-        if trigger_channel == 'A':
-            kitchen_sink_a = vm.KitchenSinkA.ChannelAComparatorEnable
-            spock_option |= vm.SpockOption.TriggerSourceA
-        elif trigger_channel == 'B':
-            kitchen_sink_a = vm.KitchenSinkA.ChannelBComparatorEnable
-            spock_option |= vm.SpockOption.TriggerSourceB
-        else:
-            raise RuntimeError(f"Cannot trigger on channel {trigger_channel}")
-        kitchen_sink_b = vm.KitchenSinkB.AnalogFilterEnable
         if self._generator_running:
             kitchen_sink_b |= vm.KitchenSinkB.WaveformGeneratorEnable
-        if trigger_type.lower() in {'falling', 'below'}:
-            spock_option |= vm.SpockOption.TriggerInvert
-        trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else (1 if hair_trigger else 4)
-        if not raw:
-            trigger_level = (trigger_level - self.trigger_low) / (self.trigger_high - self.trigger_low)
+
         analog_enable = 0
         if 'A' in channels:
             analog_enable |= 1
@@ -172,13 +152,49 @@ class Scope(vm.VirtualMachine):
                 logic_enable |= 1<<channel
 
         async with self.transaction():
+            if trigger_channel is None:
+                trigger_channel = channels[0]
+            else:
+                assert trigger_channel in channels
+            if trigger_channel in {'A', 'B'}:
+                spock_option = vm.SpockOption.TriggerTypeHardwareComparator
+                if trigger_channel == 'A':
+                    kitchen_sink_a = vm.KitchenSinkA.ChannelAComparatorEnable
+                    spock_option |= vm.SpockOption.TriggerSourceA
+                elif trigger_channel == 'B':
+                    kitchen_sink_a = vm.KitchenSinkA.ChannelBComparatorEnable
+                    spock_option |= vm.SpockOption.TriggerSourceB
+                kitchen_sink_b = vm.KitchenSinkB.AnalogFilterEnable
+                if trigger_level is None:
+                    trigger_level = (high + low) / 2
+                if trigger_type.lower() in {'falling', 'below'}:
+                    spock_option |= vm.SpockOption.TriggerInvert
+                trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else (1 if hair_trigger else 4)
+                if not raw:
+                    trigger_level = (trigger_level - self.trigger_low) / (self.trigger_high - self.trigger_low)
+                await self.set_registers(TriggerLevel=trigger_level)
+
+            elif trigger_channel == 'L':
+                spock_option = vm.SpockOption.TriggerTypeSampledAnalog
+                kitchen_sink_a = kitchen_sink_b = trigger_mask = trigger_logic = 0
+                if trigger_level is not None:
+                    for channel, value in trigger_level:
+                        if channel.startswith('L'):
+                            mask = 1<<int(channel[1:])
+                            trigger_mask |= mask
+                            if value:
+                                trigger_logic |= mask
+                if trigger_type.lower() == 'notequal':
+                    spock_option |= vm.SpockOption.TriggerInvert
+                trigger_intro = 0 if trigger_type.lower() == 'equal' else (1 if hair_trigger else 4)
+                await self.set_registers(TriggerMask=trigger_mask, TriggerLogic=trigger_logic)
+
             await self.set_registers(TraceMode=capture_mode.TraceMode, BufferMode=capture_mode.BufferMode,
                                      SampleAddress=0, ClockTicks=ticks, ClockScale=clock_scale,
-                                     TraceIntro=nsamples//2, TraceOutro=nsamples//2, TraceDelay=0,
+                                     TraceIntro=nsamples//2, TraceOutro=nsamples-nsamples//2, TraceDelay=0,
                                      Timeout=max(1, int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick))),
-                                     TriggerMask=0x7f, TriggerLogic=0x80, TriggerLevel=trigger_level, SpockOption=spock_option,
                                      TriggerIntro=trigger_intro, TriggerOutro=2 if hair_trigger else 4, Prelude=0,
-                                     ConverterLo=lo, ConverterHi=hi,
+                                     SpockOption=spock_option, ConverterLo=lo, ConverterHi=hi,
                                      KitchenSinkA=kitchen_sink_a, KitchenSinkB=kitchen_sink_b, 
                                      AnalogEnable=analog_enable, DigitalEnable=logic_enable)
             await self.issue_program_spock_registers()
@@ -304,7 +320,7 @@ class Scope(vm.VirtualMachine):
         await self.start_generator(1000, waveform='square')
         for low in np.linspace(0.063, 0.4, n):
             for high in np.linspace(0.877, 0.6, n):
-                data = await self.capture(channels='AB', period=2e-3, trigger_level=0.5, nsamples=2000, low=low, high=high, raw=True)
+                data = await self.capture(['A','B'], period=2e-3, trigger_level=0.5, nsamples=2000, low=low, high=high, raw=True, timeout=0)
                 A = np.fromiter(data['A'].values(), dtype='float')
                 A.sort()
                 B = np.fromiter(data['B'].values(), dtype='float')
