@@ -52,8 +52,8 @@ class Scope(vm.VirtualMachine):
             self.awg_sample_buffer_size = 1024
             self.awg_minimum_clock = 33
             self.awg_maximum_voltage = 3.3
-            self.analog_params = (18.584, -3.5073, 298.11, 18.253, 0.40815)
-            self.analog_offsets = {'A': -0.011785, 'B': 0.011785}
+            self.analog_params = (18.52, -3.33, 296.41, 18.337, 0.40811)
+            self.analog_offsets = {'A': 0.0008, 'B': -0.0008}
             self.analog_min = -5.7
             self.analog_max = 8
             self.capture_clock_period = 25e-9
@@ -101,14 +101,43 @@ class Scope(vm.VirtualMachine):
         dh = (h*(2*ah + b) - ah*(l + 1)) / b
         return dl, dh
 
-    async def capture(self, channels=['A'], trigger_channel=None, trigger_level=None, trigger_type='rising', hair_trigger=False,
-                      period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False, trigger_point=0.5):
-        channels = list(channels)
-        analog_channels = [channel for channel in channels if channel in {'A', 'B'}]
-        logic = 'L' in channels
+    async def capture(self, channels=['A'], trigger=None, trigger_level=None, trigger_type='rising', hair_trigger=False,
+                      period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False, trigger_position=0.25):
+        analog_channels = []
+        logic_channels = []
+        for channel in channels:
+            if channel in {'A', 'B'}:
+                analog_channels.append(channel)
+                if trigger is None:
+                    trigger = channel
+            elif channel == 'L':
+                logic_channels.extend(range(8))
+                if trigger is None:
+                    trigger = {0: 1}
+            elif channel.startswith('L'):
+                i = int(channel[1:])
+                if i not in logic_channels:
+                    logic_channels.append(i)
+                if trigger is None:
+                    trigger = {i: 1}
+            else:
+                raise ValueError(f"Unrecognised channel: {channel}")
+        if self._generator_running and 4 in logic_channels:
+            logic_channels.remove(4)
+        if 'A' in analog_channels and 7 in logic_channels:
+            logic_channels.remove(7)
+        if 'B' in analog_channels and 6 in logic_channels:
+            logic_channels.remove(6)
+        analog_enable = 0
+        if 'A' in channels:
+            analog_enable |= 1
+        if 'B' in channels:
+            analog_enable |= 2
+        logic_enable = sum(1<<channel for channel in logic_channels)
+
         ticks = int(period / nsamples / self.capture_clock_period)
         for capture_mode in vm.CaptureModes:
-            if capture_mode.analog_channels == len(analog_channels) and capture_mode.logic_channels == logic:
+            if capture_mode.analog_channels == len(analog_channels) and capture_mode.logic_channels == bool(logic_channels):
                 if ticks in range(capture_mode.clock_low, capture_mode.clock_high + 1):
                     clock_scale = 1
                     break
@@ -126,7 +155,7 @@ class Scope(vm.VirtualMachine):
         if capture_mode.clock_max is not None and ticks > capture_mode.clock_max:
             ticks = capture_mode.clock_max
         nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale))
-        total_samples = nsamples*2 if logic and analog_channels else nsamples
+        total_samples = nsamples*2 if logic_channels and analog_channels else nsamples
         buffer_width = self.capture_buffer_size // capture_mode.sample_width
         if total_samples > buffer_width:
             raise RuntimeError("Capture buffer too small for requested capture")
@@ -140,69 +169,51 @@ class Scope(vm.VirtualMachine):
                 high = self.analog_max
             lo, hi = self.calculate_lo_hi(low, high)
 
-        analog_enable = 0
-        if 'A' in channels:
-            analog_enable |= 1
-        if 'B' in channels:
-            analog_enable |= 2
-        logic_enable = 0
-        for channel in range(8):
-            if not ((channel == 4 and self._generator_running) or (channel == 6 and 'A' in channels) or (channel == 7 and 'B' in channels)):
-                logic_enable |= 1<<channel
+        spock_option = vm.SpockOption.TriggerTypeHardwareComparator
+        kitchen_sink_a = kitchen_sink_b = 0
+        if self._generator_running:
+            kitchen_sink_b |= vm.KitchenSinkB.WaveformGeneratorEnable
+        if trigger == 'A' or 7 in logic_channels:
+            kitchen_sink_a |= vm.KitchenSinkA.ChannelAComparatorEnable
+        if trigger == 'B' or 6 in logic_channels:
+            kitchen_sink_a |= vm.KitchenSinkA.ChannelBComparatorEnable
+        if analog_channels:
+            kitchen_sink_b |= vm.KitchenSinkB.AnalogFilterEnable
+        if trigger_level is None:
+            trigger_level = (high + low) / 2
+        trigger_level = (trigger_level - self.trigger_low) / (self.trigger_high - self.trigger_low)
+        if trigger == 'A' or trigger == 'B':
+            if trigger == 'A':
+                spock_option |= vm.SpockOption.TriggerSourceA
+                trigger_logic = 0x80
+            elif trigger == 'B':
+                spock_option |= vm.SpockOption.TriggerSourceB
+                trigger_logic = 0x40
+            trigger_mask = 0xff ^ trigger_logic
+        else:
+            trigger_logic = 0
+            trigger_mask = 0xff
+            for channel, value in trigger.items():
+                mask = 1<<channel
+                trigger_mask &= ~mask
+                if value:
+                    trigger_logic |= mask
+        if trigger_type.lower() in {'falling', 'below'}:
+            spock_option |= vm.SpockOption.TriggerInvert
+        trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else (1 if hair_trigger else 4)
+        trigger_outro = 2 if hair_trigger else 4
+        trace_intro = min(max(0, int(nsamples*trigger_position)), nsamples)
+        trace_outro = max(0, nsamples-trace_intro-trigger_outro)
+        if timeout is None:
+            trigger_timeout = int(period*5/self.timeout_clock_period)
+        else:
+            trigger_timeout = max(1, int((trace_intro*ticks*clock_scale*self.capture_clock_period + timeout)/self.timeout_clock_period))
 
         async with self.transaction():
-            if trigger_channel is None:
-                trigger_channel = channels[0]
-            else:
-                assert trigger_channel in channels
-            if trigger_channel in {'A', 'B'}:
-                spock_option = vm.SpockOption.TriggerTypeHardwareComparator
-                if trigger_channel == 'A':
-                    kitchen_sink_a = vm.KitchenSinkA.ChannelAComparatorEnable
-                    spock_option |= vm.SpockOption.TriggerSourceA
-                elif trigger_channel == 'B':
-                    kitchen_sink_a = vm.KitchenSinkA.ChannelBComparatorEnable
-                    spock_option |= vm.SpockOption.TriggerSourceB
-                kitchen_sink_b = vm.KitchenSinkB.AnalogFilterEnable
-                if trigger_level is None:
-                    trigger_level = (high + low) / 2
-                if trigger_type.lower() in {'falling', 'below'}:
-                    spock_option |= vm.SpockOption.TriggerInvert
-                trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else (1 if hair_trigger else 4)
-                if not raw:
-                    trigger_level = (trigger_level - self.trigger_low) / (self.trigger_high - self.trigger_low)
-                await self.set_registers(TriggerLevel=trigger_level)
-
-            elif trigger_channel == 'L':
-                spock_option = vm.SpockOption.TriggerTypeSampledAnalog
-                kitchen_sink_a = kitchen_sink_b = trigger_mask = trigger_logic = 0
-                if trigger_level is not None:
-                    for channel, value in trigger_level.items():
-                        if channel.startswith('L'):
-                            mask = 1<<int(channel[1:])
-                            trigger_mask |= mask
-                            if value:
-                                trigger_logic |= mask
-                if trigger_type.lower() == 'notequal':
-                    spock_option |= vm.SpockOption.TriggerInvert
-                trigger_intro = 0 if trigger_type.lower() == 'equal' else (1 if hair_trigger else 4)
-                await self.set_registers(TriggerMask=trigger_mask, TriggerLogic=trigger_logic, 
-                                         TriggerLevel=((low+high)/2-self.trigger_low)/(self.trigger_high-self.trigger_low))
-
-            if self._generator_running:
-                kitchen_sink_b |= vm.KitchenSinkB.WaveformGeneratorEnable
-
-            trigger_outro = 2 if hair_trigger else 4
-            trace_intro = min(max(0, int(nsamples*trigger_point)), nsamples)
-            trace_outro = max(0, nsamples-trace_intro-trigger_outro)
-            if timeout is None:
-                trigger_timeout = int(period*5/self.timeout_clock_period)
-            else:
-                trigger_timeout = max(1, int((trace_intro*ticks*clock_scale*self.capture_clock_period + timeout)/self.timeout_clock_period))
             await self.set_registers(TraceMode=capture_mode.TraceMode, BufferMode=capture_mode.BufferMode,
                                      SampleAddress=0, ClockTicks=ticks, ClockScale=clock_scale,
-                                     TraceIntro=trace_intro, TraceOutro=trace_outro, TraceDelay=0,
-                                     Timeout=trigger_timeout,
+                                     TriggerLevel=trigger_level, TriggerLogic=trigger_logic, TriggerMask=trigger_mask,
+                                     TraceIntro=trace_intro, TraceOutro=trace_outro, TraceDelay=0, Timeout=trigger_timeout,
                                      TriggerIntro=trigger_intro, TriggerOutro=trigger_outro, Prelude=0,
                                      SpockOption=spock_option, ConverterLo=lo, ConverterHi=hi,
                                      KitchenSinkA=kitchen_sink_a, KitchenSinkB=kitchen_sink_b, 
@@ -238,7 +249,7 @@ class Scope(vm.VirtualMachine):
             traces[channel] = {(t+dump_channel*ticks*clock_scale)*self.capture_clock_period: value
                                for (t, value) in zip(range(start_timestamp, timestamp, ticks*clock_scale*len(analog_channels)), data)}
 
-        if logic:
+        if logic_channels:
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - total_samples) % buffer_width,
                                          DumpMode=vm.DumpMode.Raw, DumpChan=128, DumpCount=nsamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
@@ -246,10 +257,9 @@ class Scope(vm.VirtualMachine):
                 await self.issue_analog_dump_binary()
             data = await self._reader.readexactly(nsamples)
             ts = [t*self.capture_clock_period for t in range(start_timestamp, timestamp, ticks*clock_scale)]
-            for i in range(8):
+            for i in logic_channels:
                 mask = 1<<i
-                if logic_enable & mask:
-                    traces[f'L{i}'] = {t: 1 if value & mask else 0 for (t, value) in zip(ts, data)}
+                traces[f'L{i}'] = {t: 1 if value & mask else 0 for (t, value) in zip(ts, data)}
 
         return traces
 
@@ -330,7 +340,7 @@ class Scope(vm.VirtualMachine):
         await self.start_generator(1000, waveform='square')
         for low in np.linspace(0.063, 0.4, n):
             for high in np.linspace(0.877, 0.6, n):
-                data = await self.capture(['A','B'], period=2e-3, trigger_level=0.5, nsamples=2000, low=low, high=high, raw=True, timeout=0)
+                data = await self.capture(['A','B'], period=2e-3, nsamples=2000, low=low, high=high, trigger_level=1.65, raw=True)
                 A = np.fromiter(data['A'].values(), dtype='float')
                 A.sort()
                 B = np.fromiter(data['B'].values(), dtype='float')
@@ -377,8 +387,15 @@ In [4]: t = pandas.DataFrame(capture(['A', 'B'], low=0, high=3.3))
 In [5]: t.interpolate().plot()
 Out[5]: <matplotlib.axes._subplots.AxesSubplot at 0x10db77d30>
 
-In [6]: 
+In [6]: t = pandas.DataFrame(capture(['L'], low=0, high=3.3))
+
+In [7]: t.plot()
+Out[7]: <matplotlib.axes._subplots.AxesSubplot at 0x10d05d5f8>
+
+In [8]: 
 """
+
+import pandas
 
 async def main():
     global s
@@ -389,6 +406,7 @@ async def main():
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, stream=sys.stdout)
 
     s = await Scope.connect(args.device)
+    #await s.start_generator(2000, 'triangle')
     #x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
     #y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
     #await s.start_generator(1000, wavetable=y)

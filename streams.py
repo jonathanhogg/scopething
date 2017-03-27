@@ -16,6 +16,7 @@ class SerialStream:
         for port in comports():
             if port.vid == vid and port.pid == pid:
                 return SerialStream(port.device, **kwargs)
+        raise RuntimeError("No matching serial device")
 
     def __init__(self, device, loop=None, **kwargs):
         self._device = device
