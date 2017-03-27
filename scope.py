@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import struct
+import sys
 
 import streams
 import vm
@@ -57,7 +58,7 @@ class Scope(vm.VirtualMachine):
             self.analog_max = 8
             self.capture_clock_period = 25e-9
             self.capture_buffer_size = 12*1024
-            self.trigger_timeout_tick = 6.4e-6
+            self.timeout_clock_period = 6.4e-6
             self.trigger_low = -7.517
             self.trigger_high = 10.816
         # await self.load_params()  XXX switch this off until I understand EEPROM better
@@ -101,7 +102,7 @@ class Scope(vm.VirtualMachine):
         return dl, dh
 
     async def capture(self, channels=['A'], trigger_channel=None, trigger_level=None, trigger_type='rising', hair_trigger=False,
-                      period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False):
+                      period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False, trigger_point=0.5):
         channels = list(channels)
         analog_channels = [channel for channel in channels if channel in {'A', 'B'}]
         logic = 'L' in channels
@@ -121,13 +122,14 @@ class Scope(vm.VirtualMachine):
                         continue
                     break
         else:
-            raise RuntimeError(f"Unsupported clock period: {ticks}")
+            raise RuntimeError("Unable to find appropriate capture mode")
         if capture_mode.clock_max is not None and ticks > capture_mode.clock_max:
             ticks = capture_mode.clock_max
         nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale))
-        total_samples = nsamples*2 if logic else nsamples
+        total_samples = nsamples*2 if logic and analog_channels else nsamples
         buffer_width = self.capture_buffer_size // capture_mode.sample_width
-        assert total_samples <= buffer_width
+        if total_samples > buffer_width:
+            raise RuntimeError("Capture buffer too small for requested capture")
         
         if raw:
             lo, hi = low, high
@@ -137,9 +139,6 @@ class Scope(vm.VirtualMachine):
             if high is None:
                 high = self.analog_max
             lo, hi = self.calculate_lo_hi(low, high)
-
-        if self._generator_running:
-            kitchen_sink_b |= vm.KitchenSinkB.WaveformGeneratorEnable
 
         analog_enable = 0
         if 'A' in channels:
@@ -178,7 +177,7 @@ class Scope(vm.VirtualMachine):
                 spock_option = vm.SpockOption.TriggerTypeSampledAnalog
                 kitchen_sink_a = kitchen_sink_b = trigger_mask = trigger_logic = 0
                 if trigger_level is not None:
-                    for channel, value in trigger_level:
+                    for channel, value in trigger_level.items():
                         if channel.startswith('L'):
                             mask = 1<<int(channel[1:])
                             trigger_mask |= mask
@@ -187,13 +186,24 @@ class Scope(vm.VirtualMachine):
                 if trigger_type.lower() == 'notequal':
                     spock_option |= vm.SpockOption.TriggerInvert
                 trigger_intro = 0 if trigger_type.lower() == 'equal' else (1 if hair_trigger else 4)
-                await self.set_registers(TriggerMask=trigger_mask, TriggerLogic=trigger_logic)
+                await self.set_registers(TriggerMask=trigger_mask, TriggerLogic=trigger_logic, 
+                                         TriggerLevel=((low+high)/2-self.trigger_low)/(self.trigger_high-self.trigger_low))
 
+            if self._generator_running:
+                kitchen_sink_b |= vm.KitchenSinkB.WaveformGeneratorEnable
+
+            trigger_outro = 2 if hair_trigger else 4
+            trace_intro = min(max(0, int(nsamples*trigger_point)), nsamples)
+            trace_outro = max(0, nsamples-trace_intro-trigger_outro)
+            if timeout is None:
+                trigger_timeout = int(period*5/self.timeout_clock_period)
+            else:
+                trigger_timeout = max(1, int((trace_intro*ticks*clock_scale*self.capture_clock_period + timeout)/self.timeout_clock_period))
             await self.set_registers(TraceMode=capture_mode.TraceMode, BufferMode=capture_mode.BufferMode,
                                      SampleAddress=0, ClockTicks=ticks, ClockScale=clock_scale,
-                                     TraceIntro=nsamples//2, TraceOutro=nsamples-nsamples//2, TraceDelay=0,
-                                     Timeout=max(1, int(round((period*5 if timeout is None else timeout) / self.trigger_timeout_tick))),
-                                     TriggerIntro=trigger_intro, TriggerOutro=2 if hair_trigger else 4, Prelude=0,
+                                     TraceIntro=trace_intro, TraceOutro=trace_outro, TraceDelay=0,
+                                     Timeout=trigger_timeout,
+                                     TriggerIntro=trigger_intro, TriggerOutro=trigger_outro, Prelude=0,
                                      SpockOption=spock_option, ConverterLo=lo, ConverterHi=hi,
                                      KitchenSinkA=kitchen_sink_a, KitchenSinkB=kitchen_sink_b, 
                                      AnalogEnable=analog_enable, DigitalEnable=logic_enable)
@@ -350,29 +360,34 @@ class Scope(vm.VirtualMachine):
 
 
 """
-$ ipython3 --pylab
+resistance$ ipython3 --pylab
 Using matplotlib backend: MacOSX
 
-In [1]: run scope
+In [1]: import pandas
+
+In [2]: run scope
 INFO:scope:Resetting scope
 INFO:scope:Initialised scope, revision: BS000501
 
-In [2]: generate(2000, 'triangle')
-Out[2]: 2000.0
+In [3]: generate(2000, 'triangle')
+Out[3]: 2000.0
 
-In [3]: traces = capture('A', low=0, high=3.3)
+In [4]: t = pandas.DataFrame(capture(['A', 'B'], low=0, high=3.3))
 
-In [4]: plot(traces.A.keys(), traces.A.values())
-Out[4]: [<matplotlib.lines.Line2D at 0x114009160>]
+In [5]: t.interpolate().plot()
+Out[5]: <matplotlib.axes._subplots.AxesSubplot at 0x10db77d30>
 
-In [5]: 
+In [6]: 
 """
 
 async def main():
-    global s, x, y, data
+    global s
     parser = argparse.ArgumentParser(description="scopething")
     parser.add_argument('device', nargs='?', default=None, type=str, help="Device to connect to")
+    parser.add_argument('--debug', action='store_true', default=False, help="Debug logging")
     args = parser.parse_args()
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, stream=sys.stdout)
+
     s = await Scope.connect(args.device)
     #x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
     #y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
@@ -391,7 +406,5 @@ def generate(*args, **kwargs):
     return await(s.start_generator(*args, **kwargs))
 
 if __name__ == '__main__':
-    import sys
-    logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     asyncio.get_event_loop().run_until_complete(main())
 
