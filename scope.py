@@ -51,18 +51,18 @@ class Scope(vm.VirtualMachine):
             self.awg_wavetable_size = 1024
             self.awg_sample_buffer_size = 1024
             self.awg_minimum_clock = 33
-            self.awg_maximum_voltage = 3.3
-            self.analog_params = (18.52, -3.33, 296.41, 18.337, 0.40811)
-            self.analog_offsets = {'A': 0.0008, 'B': -0.0008}
+            self.awg_maximum_voltage = 3.33
+            self.analog_params = (20.17, -5.247, 299.0, 18.47, 0.4082)
+            self.analog_offsets = {'A': -0.0117, 'B': 0.0117}
             self.analog_min = -5.7
             self.analog_max = 8
             self.capture_clock_period = 25e-9
-            self.capture_buffer_size = 12*1024
+            self.capture_buffer_size = 12<<10
             self.timeout_clock_period = 6.4e-6
             self.trigger_low = -7.517
             self.trigger_high = 10.816
         # await self.load_params()  XXX switch this off until I understand EEPROM better
-        self._generator_running = False
+        self._awg_running = False
         Log.info(f"Initialised scope, revision: {revision}")
 
     def close(self):
@@ -103,26 +103,25 @@ class Scope(vm.VirtualMachine):
 
     async def capture(self, channels=['A'], trigger=None, trigger_level=None, trigger_type='rising', hair_trigger=False,
                       period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False, trigger_position=0.25):
-        analog_channels = []
-        logic_channels = []
+        analog_channels = set()
+        logic_channels = set()
         for channel in channels:
             if channel in {'A', 'B'}:
-                analog_channels.append(channel)
+                analog_channels.add(channel)
                 if trigger is None:
                     trigger = channel
             elif channel == 'L':
-                logic_channels.extend(range(8))
+                logic_channels.update(range(8))
                 if trigger is None:
                     trigger = {0: 1}
             elif channel.startswith('L'):
                 i = int(channel[1:])
-                if i not in logic_channels:
-                    logic_channels.append(i)
+                logic_channels.add(i)
                 if trigger is None:
                     trigger = {i: 1}
             else:
                 raise ValueError(f"Unrecognised channel: {channel}")
-        if self._generator_running and 4 in logic_channels:
+        if self._awg_running and 4 in logic_channels:
             logic_channels.remove(4)
         if 'A' in analog_channels and 7 in logic_channels:
             logic_channels.remove(7)
@@ -154,7 +153,10 @@ class Scope(vm.VirtualMachine):
             raise RuntimeError("Unable to find appropriate capture mode")
         if capture_mode.clock_max is not None and ticks > capture_mode.clock_max:
             ticks = capture_mode.clock_max
-        nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale))
+        if analog_channels:
+            nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale / len(analog_channels))) * len(analog_channels)
+        else:
+            nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale))
         total_samples = nsamples*2 if logic_channels and analog_channels else nsamples
         buffer_width = self.capture_buffer_size // capture_mode.sample_width
         if total_samples > buffer_width:
@@ -171,7 +173,7 @@ class Scope(vm.VirtualMachine):
 
         spock_option = vm.SpockOption.TriggerTypeHardwareComparator
         kitchen_sink_a = kitchen_sink_b = 0
-        if self._generator_running:
+        if self._awg_running:
             kitchen_sink_b |= vm.KitchenSinkB.WaveformGeneratorEnable
         if trigger == 'A' or 7 in logic_channels:
             kitchen_sink_a |= vm.KitchenSinkA.ChannelAComparatorEnable
@@ -200,14 +202,16 @@ class Scope(vm.VirtualMachine):
                     trigger_logic |= mask
         if trigger_type.lower() in {'falling', 'below'}:
             spock_option |= vm.SpockOption.TriggerInvert
-        trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else (1 if hair_trigger else 4)
         trigger_outro = 2 if hair_trigger else 4
-        trace_intro = min(max(0, int(nsamples*trigger_position)), nsamples)
-        trace_outro = max(0, nsamples-trace_intro-trigger_outro)
+        trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else trigger_outro
+        trigger_samples = min(max(0, int(nsamples*trigger_position)), nsamples)
+        trace_outro = max(0, nsamples-trigger_samples-trigger_outro)
+        trace_intro = max(0, trigger_samples-trigger_intro)
         if timeout is None:
             trigger_timeout = int(period*5/self.timeout_clock_period)
         else:
-            trigger_timeout = max(1, int((trace_intro*ticks*clock_scale*self.capture_clock_period + timeout)/self.timeout_clock_period))
+            trigger_timeout = max(1, int(math.ceil(((trigger_outro+trace_outro)*ticks*clock_scale*self.capture_clock_period
+                                                    + timeout)/self.timeout_clock_period)))
 
         async with self.transaction():
             await self.set_registers(TraceMode=capture_mode.TraceMode, BufferMode=capture_mode.BufferMode,
@@ -230,6 +234,10 @@ class Scope(vm.VirtualMachine):
             start_timestamp += 1<<32
             timestamp += 1<<32
         address = int((await self.read_replies(1))[0], 16)
+        if capture_mode.BufferMode in {vm.BufferMode.Chop, vm.BufferMode.Dual, vm.BufferMode.MacroChop}:
+            address -= address % 2
+        elif capture_mode.BufferMode == vm.BufferMode.ChopDual:
+            address -= address % 4
         traces = DotDict()
         for dump_channel, channel in enumerate(sorted(analog_channels)):
             asamples = nsamples // len(analog_channels)
@@ -292,9 +300,9 @@ class Scope(vm.VirtualMachine):
                     raise ValueError(f"Wavetable data must be {self.awg_wavetable_size} samples")
                 await self.set_registers(Cmd=0, Mode=1, Address=0, Size=1)
                 await self.wavetable_write_bytes(wavetable)
-            await self.set_registers(Cmd=0, Mode=0, Level=vpp / self.awg_maximum_voltage,
-                                     Offset=offset / self.awg_maximum_voltage,
-                                     Ratio=nwaves * self.awg_wavetable_size / size,
+            await self.set_registers(Cmd=0, Mode=0, Level=vpp/self.awg_maximum_voltage,
+                                     Offset=offset/self.awg_maximum_voltage,
+                                     Ratio=nwaves*self.awg_wavetable_size/size,
                                      Index=0, Address=0, Size=size)
             await self.issue_translate_wavetable()
             await self.set_registers(Cmd=2, Mode=0, Clock=clock, Modulo=size,
@@ -303,7 +311,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(KitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
             await self.issue_configure_device_hardware()
             await self.issue('.')
-        self._generator_running = True
+        self._awg_running = True
         return actualf
 
     async def stop_generator(self):
@@ -312,7 +320,7 @@ class Scope(vm.VirtualMachine):
             await self.issue_control_waveform_generator()
             await self.set_registers(KitchenSinkB=0)
             await self.issue_configure_device_hardware()
-        self._generator_running = False
+        self._awg_running = False
 
     async def read_wavetable(self):
         with self.transaction():
@@ -333,26 +341,30 @@ class Scope(vm.VirtualMachine):
         if int((await self.read_replies(2))[1], 16) != byte:
             raise RuntimeError("Error writing EEPROM byte")
 
-    async def calibrate(self, n=33):
+    async def calibrate(self, n=32):
         import numpy as np
         from scipy.optimize import least_squares
         items = []
-        await self.start_generator(1000, waveform='square')
-        for low in np.linspace(0.063, 0.4, n):
-            for high in np.linspace(0.877, 0.6, n):
-                data = await self.capture(['A','B'], period=2e-3, nsamples=2000, low=low, high=high, trigger_level=1.65, raw=True)
+        await self.start_generator(frequency=1000, waveform='square')
+        i = 0
+        low_min, high_max = self.calculate_lo_hi(self.analog_min, self.analog_max)
+        low_max, high_min = self.calculate_lo_hi(0, self.awg_maximum_voltage)
+        for low in np.linspace(low_min, low_max*0.9, n):
+            for high in np.linspace(high_min*1.1, high_max, n):
+                data = await self.capture(channels=['A','B'], period=2e-3 if i%2 == 0 else 1e-3, nsamples=2000, low=low, high=high, timeout=0, raw=True)
                 A = np.fromiter(data['A'].values(), dtype='float')
                 A.sort()
                 B = np.fromiter(data['B'].values(), dtype='float')
                 B.sort()
-                Azero, A3v3 = A[10:490].mean(), A[510:990].mean()
-                Bzero, B3v3 = B[10:490].mean(), B[510:990].mean()
+                Azero, Amax = A[10:490].mean(), A[510:990].mean()
+                Bzero, Bmax = B[10:490].mean(), B[510:990].mean()
                 zero = (Azero + Bzero) / 2
-                analog_range = 3.3 / ((A3v3 + B3v3)/2 - zero)
+                analog_range = self.awg_maximum_voltage / ((Amax + Bmax)/2 - zero)
                 analog_low = -zero * analog_range
                 analog_high = analog_low + analog_range
                 offset = (Azero - Bzero) / 2 * analog_range
                 items.append((analog_low, analog_high, low, high, offset))
+                i += 1
         await self.stop_generator()
         items = np.array(items)
         def f(params, analog_low, analog_high, low, high):
@@ -361,11 +373,10 @@ class Scope(vm.VirtualMachine):
         result = least_squares(f, self.analog_params, args=items.T[:4], bounds=([0, -np.inf, 250, 0, 0], [np.inf, np.inf, 350, np.inf, np.inf]))
         if result.success in range(1, 5):
             self.analog_params = tuple(result.x)
-            offset = items[:, 4].mean()
+            offset = items[:,4].mean()
             self.analog_offsets = {'A': -offset, 'B': +offset}
         else:
             Log.warning(f"Calibration failed: {result.message}")
-            print(result.message)
         return result.success
 
 
