@@ -134,34 +134,33 @@ class Scope(vm.VirtualMachine):
             analog_enable |= 2
         logic_enable = sum(1<<channel for channel in logic_channels)
 
-        ticks = int(period / nsamples / self.capture_clock_period)
+        ticks = int(round(period / nsamples / self.capture_clock_period))
         for capture_mode in vm.CaptureModes:
             if capture_mode.analog_channels == len(analog_channels) and capture_mode.logic_channels == bool(logic_channels):
                 if ticks in range(capture_mode.clock_low, capture_mode.clock_high + 1):
                     clock_scale = 1
-                    break
                 elif capture_mode.clock_divide and ticks > capture_mode.clock_high:
                     for clock_scale in range(2, 1<<16):
-                        test_ticks = int(period / nsamples / self.capture_clock_period / clock_scale)
+                        test_ticks = int(round(period / nsamples / self.capture_clock_period / clock_scale))
                         if test_ticks in range(capture_mode.clock_low, capture_mode.clock_high + 1):
                             ticks = test_ticks
                             break
                     else:
                         continue
+                else:
+                    continue
+                if capture_mode.clock_max is not None and ticks > capture_mode.clock_max:
+                    ticks = capture_mode.clock_max
+                nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale))
+                if len(analog_channels) == 2:
+                    nsamples -= nsamples % 2
+                buffer_width = self.capture_buffer_size // capture_mode.sample_width
+                if logic_channels and analog_channels:
+                    buffer_width //= 2
+                if nsamples <= buffer_width:
                     break
         else:
             raise RuntimeError("Unable to find appropriate capture mode")
-        if capture_mode.clock_max is not None and ticks > capture_mode.clock_max:
-            ticks = capture_mode.clock_max
-        if analog_channels:
-            nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale / len(analog_channels))) * len(analog_channels)
-        else:
-            nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale))
-        buffer_width = self.capture_buffer_size // capture_mode.sample_width
-        if logic_channels and analog_channels:
-            buffer_width //= 2
-        if nsamples > buffer_width:
-            raise RuntimeError("Capture buffer too small for requested capture")
         
         if raw:
             lo, hi = low, high
@@ -295,6 +294,7 @@ class Scope(vm.VirtualMachine):
                 await self.set_registers(Cmd=0, Mode=mode, Ratio=ratio)
                 await self.issue_synthesize_wavetable()
             else:
+                wavetable = [min(max(0, int(round(y*255))),255) for y in wavetable]
                 if len(wavetable) != self.awg_wavetable_size:
                     raise ValueError(f"Wavetable data must be {self.awg_wavetable_size} samples")
                 await self.set_registers(Cmd=0, Mode=1, Address=0, Size=1)
@@ -416,9 +416,11 @@ async def main():
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, stream=sys.stdout)
 
     s = await Scope.connect(args.device)
+
     #await s.start_generator(2000, 'triangle')
+    #import numpy as np
     #x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
-    #y = np.round((np.sin(x)**5)*127 + 128, 0).astype('uint8')
+    #y = (np.sin(x)**5 + 1) / 2
     #await s.start_generator(1000, wavetable=y)
 
 def await(g):
