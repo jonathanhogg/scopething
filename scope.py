@@ -157,9 +157,10 @@ class Scope(vm.VirtualMachine):
             nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale / len(analog_channels))) * len(analog_channels)
         else:
             nsamples = int(round(period / ticks / self.capture_clock_period / clock_scale))
-        total_samples = nsamples*2 if logic_channels and analog_channels else nsamples
         buffer_width = self.capture_buffer_size // capture_mode.sample_width
-        if total_samples > buffer_width:
+        if logic_channels and analog_channels:
+            buffer_width //= 2
+        if nsamples > buffer_width:
             raise RuntimeError("Capture buffer too small for requested capture")
         
         if raw:
@@ -234,15 +235,13 @@ class Scope(vm.VirtualMachine):
             start_timestamp += 1<<32
             timestamp += 1<<32
         address = int((await self.read_replies(1))[0], 16)
-        if capture_mode.BufferMode in {vm.BufferMode.Chop, vm.BufferMode.Dual, vm.BufferMode.MacroChop}:
+        if capture_mode.BufferMode in {vm.BufferMode.Chop, vm.BufferMode.MacroChop, vm.BufferMode.ChopDual}:
             address -= address % 2
-        elif capture_mode.BufferMode == vm.BufferMode.ChopDual:
-            address -= address % 4
         traces = DotDict()
         for dump_channel, channel in enumerate(sorted(analog_channels)):
             asamples = nsamples // len(analog_channels)
             async with self.transaction():
-                await self.set_registers(SampleAddress=(address - total_samples) % buffer_width,
+                await self.set_registers(SampleAddress=(address - nsamples) % buffer_width,
                                          DumpMode=vm.DumpMode.Native if capture_mode.sample_width == 2 else vm.DumpMode.Raw, 
                                          DumpChan=dump_channel, DumpCount=asamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
                 await self.issue_program_spock_registers()
@@ -259,7 +258,7 @@ class Scope(vm.VirtualMachine):
 
         if logic_channels:
             async with self.transaction():
-                await self.set_registers(SampleAddress=(address - total_samples) % buffer_width,
+                await self.set_registers(SampleAddress=(address - nsamples) % buffer_width,
                                          DumpMode=vm.DumpMode.Raw, DumpChan=128, DumpCount=nsamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
                 await self.issue_program_spock_registers()
                 await self.issue_analog_dump_binary()
