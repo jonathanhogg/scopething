@@ -52,8 +52,8 @@ class Scope(vm.VirtualMachine):
             self.awg_sample_buffer_size = 1024
             self.awg_minimum_clock = 33
             self.awg_maximum_voltage = 3.33
-            self.analog_params = (20.17, -5.247, 299.0, 18.47, 0.4082)
-            self.analog_offsets = {'A': -0.0117, 'B': 0.0117}
+            self.analog_params = (20.164, -5.2470, 299.00, 18.472, 0.40827)
+            self.analog_offsets = {'A': -0.011924, 'B': 0.011924}
             self.analog_min = -5.7
             self.analog_max = 8
             self.capture_clock_period = 25e-9
@@ -208,7 +208,7 @@ class Scope(vm.VirtualMachine):
         trace_outro = max(0, nsamples-trigger_samples-trigger_outro)
         trace_intro = max(0, trigger_samples-trigger_intro)
         if timeout is None:
-            trigger_timeout = int(period*5/self.timeout_clock_period)
+            trigger_timeout = 0
         else:
             trigger_timeout = max(1, int(math.ceil(((trigger_outro+trace_outro)*ticks*clock_scale*self.capture_clock_period
                                                     + timeout)/self.timeout_clock_period)))
@@ -405,8 +405,6 @@ Out[7]: <matplotlib.axes._subplots.AxesSubplot at 0x10d05d5f8>
 In [8]: 
 """
 
-import pandas
-
 async def main():
     global s
     parser = argparse.ArgumentParser(description="scopething")
@@ -428,6 +426,10 @@ def await(g):
 
 def capture(*args, **kwargs):
     return await(s.capture(*args, **kwargs))
+
+def capturep(*args, **kwargs):
+    import pandas
+    return pandas.DataFrame(capture(*args, **kwargs))
 
 def calibrate(*args, **kwargs):
     return await(s.calibrate(*args, **kwargs))
