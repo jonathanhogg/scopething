@@ -249,11 +249,12 @@ class Scope(vm.VirtualMachine):
             value_multiplier, value_offset = (1, 0) if raw else ((high-low), low+self.analog_offsets[channel])
             if capture_mode.sample_width == 2:
                 data = struct.unpack(f'>{asamples}h', data)
-                data = [(value/65536+0.5)*value_multiplier + value_offset for value in data]
+                data = ((value/65536+0.5)*value_multiplier + value_offset for value in data)
             else:
-                data = [(value/256)*value_multiplier + value_offset for value in data]
-            traces[channel] = {(t+dump_channel*ticks*clock_scale)*self.capture_clock_period: value
-                               for (t, value) in zip(range(start_timestamp, timestamp, ticks*clock_scale*len(analog_channels)), data)}
+                data = ((value/256)*value_multiplier + value_offset for value in data)
+            ts = (t*self.capture_clock_period for t in range(start_timestamp+dump_channel*ticks*clock_scale, timestamp,
+                                                             ticks*clock_scale*len(analog_channels)))
+            traces[channel] = dict(zip(ts, data))
 
         if logic_channels:
             async with self.transaction():
