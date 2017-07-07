@@ -2,11 +2,35 @@
 import asyncio
 import logging
 import os
+import sys
 import serial
 from serial.tools.list_ports import comports
 
 
 Log = logging.getLogger('streams')
+
+
+if sys.platform == 'linux':
+
+    import fcntl
+    import struct
+
+    TIOCGSERIAL = 0x541E
+    TIOCSSERIAL = 0x541F
+    ASYNC_LOW_LATENCY = 1<<13
+    SERIAL_STRUCT_FORMAT = '2iI5iH2ci2HPHIL'
+    SERIAL_FLAGS_INDEX = 4
+
+    def set_low_latency(fd):
+        data = list(struct.unpack(SERIAL_STRUCT_FORMAT, fcntl.ioctl(fd, TIOCGSERIAL, b'\0'*struct.calcsize(SERIAL_STRUCT_FORMAT))))
+        data[SERIAL_FLAGS_INDEX] |= ASYNC_LOW_LATENCY
+        fcntl.ioctl(fd, TIOCSSERIAL, struct.pack(SERIAL_STRUCT_FORMAT, *data))
+
+else:
+
+    def set_low_latency(fd):
+        pass
+
 
 
 class SerialStream:
@@ -21,10 +45,12 @@ class SerialStream:
     def __init__(self, device, loop=None, **kwargs):
         self._device = device
         self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
+        set_low_latency(self._connection)
         Log.debug(f"Opened SerialStream on {device}")
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._output_buffer = bytes()
         self._output_buffer_empty = None
+        self._pushback_buffer = bytes()
 
     def __repr__(self):
         return f'<{self.__class__.__name__}:{self._device}>'
@@ -40,7 +66,7 @@ class SerialStream:
                 n = self._connection.write(data)
             except serial.SerialTimeoutException:
                 n = 0
-            except Exception as e:
+            except:
                 Log.exception("Error writing to stream")
                 raise
             if n:
@@ -72,8 +98,15 @@ class SerialStream:
             self._loop.remove_writer(self._connection)
             self._output_buffer_empty.set_result(None)
             self._output_buffer_empty = None
-        
+
+    def pushback(self, data):
+        self._pushback_buffer += data
+
     async def read(self, n=None):
+        if self._pushback_buffer:
+            data = self._pushback_buffer if n is None else self._pushback_buffer[:n]
+            self._pushback_buffer = self._pushback_buffer[len(data):]
+            return data
         while True:
             w = self._connection.in_waiting
             if w:

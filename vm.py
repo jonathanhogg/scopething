@@ -238,20 +238,22 @@ class VirtualMachine:
         else:
             self._transactions[-1].append(cmd)
 
-    async def readuntil(self, separator):
-        data = b''
-        while not data.endswith(separator):
-            data += await self._reader.read(1)
-        return data
-
     async def read_replies(self, n):
         if self._transactions:
             raise TypeError("Command transaction in progress")
         replies = []
-        for i in range(n):
-            reply = (await self.readuntil(b'\r'))[:-1]
-            Log.debug(f"Read reply: {reply!r}")
-            replies.append(reply)
+        data = b''
+        while len(replies) < n:
+            index = data.find(b'\r')
+            if index >= 0:
+                reply = data[:index]
+                Log.debug(f"Read reply: {reply!r}")
+                replies.append(reply)
+                data = data[index+1:]
+            else:
+                data += await self._reader.read()
+        if data:
+            self._reader.pushback(data)
         return replies
 
     async def reset(self):
@@ -260,7 +262,8 @@ class VirtualMachine:
         Log.debug("Issue reset")
         self._writer.write(b'!')
         await self._writer.drain()
-        await self.readuntil(b'!')
+        while not (await self._reader.read()).endswith(b'!'):
+            pass
         Log.debug("Reset complete")
 
     async def set_registers(self, **kwargs):
