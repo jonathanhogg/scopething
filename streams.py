@@ -1,3 +1,9 @@
+"""
+streams
+=======
+
+Package for asynchronous serial IO.
+"""
 
 import asyncio
 import logging

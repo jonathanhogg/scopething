@@ -1,4 +1,18 @@
 
+"""
+vm
+==
+
+Package capturing BitScope VM specification, including registers, enumerations, flags,
+commands and logic for encoding and decoding virtual machine instructions and data.
+
+All names and descriptions copyright BitScope and taken from their [VM specification
+document][VM01B].
+
+[VM01B]: https://docs.google.com/document/d/1cZNRpSPAMyIyAvIk_mqgEByaaHzbFTX8hWglAMTlnHY
+
+"""
+
 import asyncio
 from collections import namedtuple
 from enum import IntEnum
@@ -86,19 +100,19 @@ Registers = {
 
 class TraceMode(IntEnum):
     Analog         =  0
-    AnalogFast     =  4
-    AnalogShot     = 11
     Mixed          =  1
+    AnalogChop     =  2
+    MixedChop      =  3
+    AnalogFast     =  4
     MixedFast      =  5
+    AnalogFastChop =  6
+    MixedFastChop  =  7
+    AnalogShot     = 11
     MixedShot      = 12
+    LogicShot      = 13
     Logic          = 14
     LogicFast      = 15
-    LogicShot      = 13
-    AnalogChop     =  2
-    AnalogFastChop =  6
     AnalogShotChop = 16
-    MixedChop      =  3
-    MixedFastChop  =  7
     MixedShotChop  = 17
     Macro          = 18
     MacroChop      = 19
@@ -319,6 +333,24 @@ class VirtualMachine:
     async def issue_triggered_trace(self):
         await self.issue(b'D')
 
+    async def read_analog_samples(self, n, sample_width):
+        if self._transactions:
+            raise TypeError("Command transaction in progress")
+        if sample_width == 2:
+            data = await self._reader.readexactly(2 * n)
+            data = struct.unpack(f'>{n}h', data)
+            return [value/65536 + 0.5 for value in data]
+        elif sample_width == 1:
+            data = await self._reader.readexactly(n)
+            return [value/256 for value in data]
+        else:
+            raise ValueError(f"Bad sample width: {sample_width}")
+
+    async def read_logic_samples(self, n):
+        if self._transactions:
+            raise TypeError("Command transaction in progress")
+        return await self._reader.readexactly(n)
+
     async def issue_cancel_trace(self):
         await self.issue(b'K')
 
@@ -330,6 +362,11 @@ class VirtualMachine:
 
     async def issue_wavetable_read(self):
         await self.issue(b'R')
+
+    async def wavetable_read_bytes(self, n):
+        if self._transactions:
+            raise TypeError("Command transaction in progress")
+        return await self._reader.readexactly(n)
 
     async def wavetable_write_bytes(self, bs):
         cmd = ''
