@@ -54,12 +54,12 @@ class Scope(vm.VirtualMachine):
             self.awg_sample_buffer_size = 1024
             self.awg_minimum_clock = 33
             self.awg_maximum_voltage = 3.33
-            #self.analog_params = self.AnalogParams(20, -5, 300, 18.3, -7.5)
-            #self.analog_offsets = {'A': 0, 'B': 0}
-            self.analog_params = self.AnalogParams(19.7, -4.86, 298.6, 18.361, -7.496)
-            self.analog_offsets = {'A': -0.00937, 'B': 0.00937}
-            self.analog_min = -5.5
-            self.analog_max = 8
+            self.analog_params = self.AnalogParams(20, -5, 300, 18.36, -7.5)
+            self.analog_offsets = {'A': 0, 'B': 0}
+            self.analog_default_low = -5.5
+            self.analog_default_high = 8
+            self.analog_lo_min = 0.07
+            self.analog_hi_max = 0.88
             self.capture_clock_period = 25e-9
             self.capture_buffer_size = 12<<10
             self.timeout_clock_period = 6.4e-6
@@ -151,10 +151,12 @@ class Scope(vm.VirtualMachine):
             lo, hi = low, high
         else:
             if low is None:
-                low = self.analog_min
+                low = self.analog_default_low
             if high is None:
-                high = self.analog_max
+                high = self.analog_default_high
             lo, hi = self.calculate_lo_hi(low, high)
+            if lo < self.analog_lo_min or hi > self.analog_hi_max:
+                Log.warning(f"Reference voltage DAC(s) out of safe range: lo={lo:.3f} hi={hi:.3f}")
 
         spock_option = vm.SpockOption.TriggerTypeHardwareComparator
         kitchen_sink_a = kitchen_sink_b = 0
@@ -328,39 +330,36 @@ class Scope(vm.VirtualMachine):
         items = []
         await self.start_generator(frequency=1000, waveform='square')
         i = 0
-        low_min, high_max = self.calculate_lo_hi(self.analog_min, self.analog_max)
-        low_max, high_min = self.calculate_lo_hi(0, self.awg_maximum_voltage)
-        for low in np.linspace(low_min, low_max, n):
-            for high in np.linspace(high_min, high_max, n):
-                data = await self.capture(channels=['A','B'], period=2e-3 if i%2 == 0 else 1e-3, nsamples=2000, low=low, high=high, timeout=0, raw=True)
+        for lo in np.linspace(self.analog_lo_min, 0.5, n, endpoint=False):
+            for hi in np.linspace(0.5, self.analog_hi_max, n, endpoint=False):
+                data = await self.capture(channels=['A','B'], period=2e-3 if i%2 == 0 else 1e-3, nsamples=2000, low=lo, high=hi, timeout=0, raw=True)
                 A = np.fromiter(data['A'].values(), dtype='float')
                 A.sort()
                 B = np.fromiter(data['B'].values(), dtype='float')
                 B.sort()
                 Azero, Amax = A[25:475].mean(), A[525:975].mean()
                 Bzero, Bmax = B[25:475].mean(), B[525:975].mean()
-                if Azero > 0.1 and Bzero > 0.1 and Amax < 0.9 and Bmax < 0.9:
+                if Azero > 0.05 and Bzero > 0.05 and Amax < 0.95 and Bmax < 0.95:
                     zero = (Azero + Bzero) / 2
                     analog_range = self.awg_maximum_voltage / ((Amax + Bmax)/2 - zero)
-                    analog_low = -zero * analog_range
-                    analog_high = analog_low + analog_range
+                    low = -zero * analog_range
+                    high = low + analog_range
                     offset = ((Amax - Bmax) + (Azero - Bzero))/2 * analog_range
-                    items.append((analog_low, analog_high, low, high, offset))
+                    items.append((low, high, lo, hi, offset))
                 i += 1
         await self.stop_generator()
         items = np.array(items)
-        def f(params, analog_low, analog_high, low, high):
-            lo, hi = self.calculate_lo_hi(analog_low, analog_high, params)
-            return np.sqrt((low - lo) ** 2 + (high - hi) ** 2)
-        result = least_squares(f, self.analog_params, args=items.T[:4], xtol=1e-9, max_nfev=10000,
-                               bounds=([0, -np.inf, 200, 0, -np.inf],
-                                       [np.inf, np.inf, 400, np.inf, 0]))
-        if result.success in range(1, 5):
-            Log.info(f"Calibration succeeded: {result.success}")
-            self.analog_params = params = self.AnalogParams(*result.x)
+        def f(params, low, high, lo, hi):
+            clo, chi = self.calculate_lo_hi(low, high, params)
+            return np.sqrt((lo-clo)**2 + (hi-chi)**2)
+        result = least_squares(f, self.analog_params, args=items.T[:4], max_nfev=1000, ftol=1e-9, xtol=1e-9,
+                               bounds=([0, -np.inf, 200, 0, -np.inf], [np.inf, np.inf, 400, np.inf, 0]))
+        if result.success:
+            Log.info(f"Calibration succeeded: {result.message}")
+            params = self.analog_params = self.AnalogParams(*result.x)
             Log.info(f"Analog parameters: d={params.d:.1f}Ω f={params.f:.2f}Ω b={params.b:.1f}Ω scale={params.scale:.3f}V offset={params.offset:.3f}V")
             clow, chigh = self.calculate_lo_hi(items[:,0], items[:,1])
-            diff = np.sqrt((((clow-items[:,2])**2).mean() + ((chigh-items[:,3])**2).mean()) / 2)
+            diff = (np.sqrt(((clow-items[:,2])**2).mean()) + np.sqrt(((chigh-items[:,3])**2).mean())) / (items[:,3]-items[:,2]).mean()
             Log.info(f"Mean error: {diff*10000:.1f}bps")
             offsets = items[:,4]
             offset = offsets.mean()
