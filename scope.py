@@ -23,8 +23,6 @@ class DotDict(dict):
 
 class Scope(vm.VirtualMachine):
 
-    PARAMS_MAGIC = 0xb0b2
-
     AnalogParams = namedtuple('AnalogParams', ['rd', 'rr', 'rt', 'rb', 'scale', 'offset'])
 
     @classmethod
@@ -38,7 +36,7 @@ class Scope(vm.VirtualMachine):
             Log.info(f"Connecting to remote scope at {host}:{port}")
             reader, writer = await asyncio.open_connection(host, int(port))
         else:
-            raise ValueError(f"Don't know what to do with '{device}'")
+            raise ValueError(f"Don't know what to do with {device!r}")
         scope = cls(reader, writer)
         await scope.setup()
         return scope
@@ -63,6 +61,7 @@ class Scope(vm.VirtualMachine):
             self.capture_clock_period = 25e-9
             self.capture_buffer_size = 12<<10
             self.timeout_clock_period = 6.4e-6
+            self.timestamp_rollover = (1<<32) * self.capture_clock_period
         else:
             raise RuntimeError(f"Unsupported scope, revision: {revision}")
         self._awg_running = False
@@ -335,7 +334,7 @@ class Scope(vm.VirtualMachine):
         items = []
         await self.start_generator(frequency=1000, waveform='square')
         for lo in np.linspace(self.analog_lo_min, 0.5, n, endpoint=False):
-            for hi in np.linspace(0.5, self.analog_hi_max, n, endpoint=False):
+            for hi in np.linspace(0.5, self.analog_hi_max, n):
                 data = await self.capture(channels=['A','B'], period=2e-3, nsamples=2000, timeout=0, low=lo, high=hi, raw=True)
                 A = np.fromiter(data['A'].values(), count=1000, dtype='float')
                 A.sort()
@@ -362,8 +361,8 @@ class Scope(vm.VirtualMachine):
         if result.success:
             Log.info(f"Calibration succeeded: {result.message}")
             params = self.analog_params = self.AnalogParams(*result.x)
-            Log.info(f"Analog parameters: rd={params.rd:.1f}Ω rr={params.rr:.1f}Ω rt={params.rt:.1f} rb={params.rb:.1f}"
-                     f" scale={params.scale:.3f}V offset={params.offset:.3f}V")
+            Log.info(f"Analog parameters: rd={params.rd:.1f}Ω rr={params.rr:.1f}Ω rt={params.rt:.1f}Ω rb={params.rb:.1f}Ω "
+                     f"scale={params.scale:.3f}V offset={params.offset:.3f}V")
             lo, hi, low, high, offset = items
             clo, chi = self.calculate_lo_hi(low, high)
             lo_error = np.sqrt((((clo-lo)/(hi-lo))**2).mean())
@@ -410,14 +409,7 @@ async def main():
     parser.add_argument('--debug', action='store_true', default=False, help="Debug logging")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, stream=sys.stdout)
-
     s = await Scope.connect(args.device)
-
-    #await s.start_generator(2000, 'triangle')
-    #import numpy as np
-    #x = np.linspace(0, 2*np.pi, s.awg_wavetable_size, endpoint=False)
-    #y = (np.sin(x)**5 + 1) / 2
-    #await s.start_generator(1000, wavetable=y)
 
 def await(g):
     return asyncio.get_event_loop().run_until_complete(g)
