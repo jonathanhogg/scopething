@@ -339,10 +339,10 @@ class VirtualMachine:
         if sample_width == 2:
             data = await self._reader.readexactly(2 * n)
             data = struct.unpack(f'>{n}h', data)
-            return [value/65536 + 0.5 for value in data]
+            return [(value+32768)/65535 for value in data]
         elif sample_width == 1:
             data = await self._reader.readexactly(n)
-            return [value/256 for value in data]
+            return [value/255 for value in data]
         else:
             raise ValueError(f"Bad sample width: {sample_width}")
 
