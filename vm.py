@@ -158,7 +158,7 @@ class TraceStatus(IntEnum):
     Stop = 0x03
 
 CaptureMode = namedtuple('CaptureMode', ('clock_low', 'clock_high', 'clock_max', 'analog_channels', 'sample_width',
-                                         'logic_channels', 'clock_divide', 'TraceMode', 'BufferMode'))
+                                         'logic_channels', 'clock_divide', 'trace_mode', 'buffer_mode'))
 
 CaptureModes = [
     CaptureMode(40, 65536, None, 1, 2, False, False, TraceMode.Macro,          BufferMode.Macro),

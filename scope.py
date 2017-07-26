@@ -101,11 +101,7 @@ class Scope(vm.VirtualMachine):
             logic_channels.remove(7)
         if 'B' in analog_channels and 6 in logic_channels:
             logic_channels.remove(6)
-        analog_enable = 0
-        if 'A' in channels:
-            analog_enable |= 1
-        if 'B' in channels:
-            analog_enable |= 2
+        analog_enable = sum(1<<(ord(channel)-ord('A')) for channel in analog_channels)
         logic_enable = sum(1<<channel for channel in logic_channels)
 
         ticks = int(round(period / nsamples / self.capture_clock_period))
@@ -192,7 +188,7 @@ class Scope(vm.VirtualMachine):
                                                     + timeout)/self.timeout_clock_period)))
 
         async with self.transaction():
-            await self.set_registers(TraceMode=capture_mode.TraceMode, BufferMode=capture_mode.BufferMode,
+            await self.set_registers(TraceMode=capture_mode.trace_mode, BufferMode=capture_mode.buffer_mode,
                                      SampleAddress=0, ClockTicks=ticks, ClockScale=clock_scale,
                                      TriggerLevel=trigger_level, TriggerLogic=trigger_logic, TriggerMask=trigger_mask,
                                      TraceIntro=trace_intro, TraceOutro=trace_outro, TraceDelay=0, Timeout=trigger_timeout,
@@ -217,6 +213,7 @@ class Scope(vm.VirtualMachine):
         address = int((await self.read_replies(1))[0], 16)
         if capture_mode.analog_channels == 2:
             address -= address % 2
+
         traces = DotDict()
         for dump_channel, channel in enumerate(sorted(analog_channels)):
             asamples = nsamples // len(analog_channels)
@@ -281,18 +278,20 @@ class Scope(vm.VirtualMachine):
                     raise ValueError(f"Wavetable data must be {self.awg_wavetable_size} samples")
                 await self.set_registers(Cmd=0, Mode=1, Address=0, Size=1)
                 await self.wavetable_write_bytes(wavetable)
+        async with self.transaction():
             offset = (high+low)/2 - self.awg_maximum_voltage/2
             await self.set_registers(Cmd=0, Mode=0, Level=(high-low)/self.awg_maximum_voltage,
                                      Offset=offset/self.awg_maximum_voltage,
                                      Ratio=nwaves*self.awg_wavetable_size/size,
                                      Index=0, Address=0, Size=size)
             await self.issue_translate_wavetable()
+        async with self.transaction():
             await self.set_registers(Cmd=2, Mode=0, Clock=clock, Modulo=size,
                                      Mark=10, Space=1, Rest=0x7f00, Option=0x8004)
             await self.issue_control_waveform_generator()
+        async with self.transaction():
             await self.set_registers(KitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
             await self.issue_configure_device_hardware()
-            await self.issue('.')
         self._awg_running = True
         return actualf
 
