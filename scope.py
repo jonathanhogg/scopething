@@ -176,7 +176,7 @@ class Scope(vm.VirtualMachine):
                     trigger_logic |= mask
         if trigger_type.lower() in {'falling', 'below'}:
             spock_option |= vm.SpockOption.TriggerInvert
-        trigger_outro = 2 if hair_trigger else 4
+        trigger_outro = 4 if hair_trigger else 8
         trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else trigger_outro
         trigger_samples = min(max(0, int(nsamples*trigger_position)), nsamples)
         trace_outro = max(0, nsamples-trigger_samples-trigger_outro)
@@ -184,7 +184,7 @@ class Scope(vm.VirtualMachine):
         if timeout is None:
             trigger_timeout = 0
         else:
-            trigger_timeout = max(1, int(math.ceil(((trigger_intro+trigger_outro+trace_outro+2)*ticks*clock_scale*self.capture_clock_period
+            trigger_timeout = max(1, int(math.ceil(((trigger_intro+trigger_outro+trace_outro)*ticks*clock_scale*self.capture_clock_period
                                                     + timeout)/self.timeout_clock_period)))
 
         async with self.transaction():
@@ -192,7 +192,7 @@ class Scope(vm.VirtualMachine):
                                      SampleAddress=0, ClockTicks=ticks, ClockScale=clock_scale,
                                      TriggerLevel=trigger_level, TriggerLogic=trigger_logic, TriggerMask=trigger_mask,
                                      TraceIntro=trace_intro, TraceOutro=trace_outro, TraceDelay=0, Timeout=trigger_timeout,
-                                     TriggerIntro=trigger_intro, TriggerOutro=trigger_outro, Prelude=0,
+                                     TriggerIntro=trigger_intro//2, TriggerOutro=trigger_outro//2, Prelude=0,
                                      SpockOption=spock_option, ConverterLo=lo, ConverterHi=hi,
                                      KitchenSinkA=kitchen_sink_a, KitchenSinkB=kitchen_sink_b, 
                                      AnalogEnable=analog_enable, DigitalEnable=logic_enable)
