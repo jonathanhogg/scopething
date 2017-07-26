@@ -56,7 +56,6 @@ class SerialStream:
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._output_buffer = bytes()
         self._output_buffer_empty = None
-        self._pushback_buffer = bytes()
 
     def __repr__(self):
         return f'<{self.__class__.__name__}:{self._device}>'
@@ -105,14 +104,7 @@ class SerialStream:
             self._output_buffer_empty.set_result(None)
             self._output_buffer_empty = None
 
-    def pushback(self, data):
-        self._pushback_buffer += data
-
     async def read(self, n=None):
-        if self._pushback_buffer:
-            data = self._pushback_buffer if n is None else self._pushback_buffer[:n]
-            self._pushback_buffer = self._pushback_buffer[len(data):]
-            return data
         while True:
             w = self._connection.in_waiting
             if w:

@@ -151,6 +151,12 @@ class KitchenSinkB(IntEnum):
     AnalogFilterEnable       = 0x80
     WaveformGeneratorEnable  = 0x40
 
+class TraceStatus(IntEnum):
+    Done = 0x00
+    Auto = 0x01
+    Wait = 0x02
+    Stop = 0x03
+
 CaptureMode = namedtuple('CaptureMode', ('clock_low', 'clock_high', 'clock_max', 'analog_channels', 'sample_width',
                                          'logic_channels', 'clock_divide', 'TraceMode', 'BufferMode'))
 
@@ -226,7 +232,8 @@ class VirtualMachine:
             self._vm._transactions.append(self)
             return self
         async def __aexit__(self, exc_type, exc_value, traceback):
-            self._vm._transactions.pop()
+            if self._vm._transactions.pop() != self:
+                raise RuntimeError("Mis-ordered transactions")
             if exc_type is None:
                 await self._vm.issue(self._data)
             return False
@@ -235,6 +242,15 @@ class VirtualMachine:
         self._reader = reader
         self._writer = writer
         self._transactions = []
+        self._reply_buffer = b''
+
+    def close(self):
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+            self._reader = None
+
+    __del__ = close
 
     def transaction(self):
         return self.Transaction(self)
@@ -256,7 +272,7 @@ class VirtualMachine:
         if self._transactions:
             raise TypeError("Command transaction in progress")
         replies = []
-        data = b''
+        data, self._reply_buffer = self._reply_buffer, b''
         while len(replies) < n:
             index = data.find(b'\r')
             if index >= 0:
@@ -267,7 +283,7 @@ class VirtualMachine:
             else:
                 data += await self._reader.read()
         if data:
-            self._reader.pushback(data)
+            self._reply_buffer = data
         return replies
 
     async def reset(self):
@@ -278,6 +294,7 @@ class VirtualMachine:
         await self._writer.drain()
         while not (await self._reader.read()).endswith(b'!'):
             pass
+        self._reply_buffer = b''
         Log.debug("Reset complete")
 
     async def set_registers(self, **kwargs):

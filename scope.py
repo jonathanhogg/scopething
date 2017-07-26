@@ -67,14 +67,6 @@ class Scope(vm.VirtualMachine):
         self._awg_running = False
         Log.info(f"Initialised scope, revision: {revision}")
 
-    def close(self):
-        if self._writer is not None:
-            self._writer.close()
-            self._writer = None
-            self._reader = None
-
-    __del__ = close
-
     def calculate_lo_hi(self, low, high, params=None):
         params = self.analog_params if params is None else self.AnalogParams(*params)
         l = (low - params.offset) / params.scale
@@ -212,15 +204,18 @@ class Scope(vm.VirtualMachine):
             await self.issue_configure_device_hardware()
             await self.issue_triggered_trace()
         while True:
-            code, timestamp = (int(x, 16) for x in await self.read_replies(2))
-            if code != 2:
-                break
+            try:
+                code, timestamp = (int(x, 16) for x in await self.read_replies(2))
+                if code != vm.TraceStatus.Wait:
+                    break
+            except asyncio.CancelledError:
+                await self.issue_cancel_trace()
         start_timestamp = timestamp - nsamples*ticks*clock_scale
         if start_timestamp < 0:
             start_timestamp += 1<<32
             timestamp += 1<<32
         address = int((await self.read_replies(1))[0], 16)
-        if capture_mode.BufferMode in {vm.BufferMode.Chop, vm.BufferMode.MacroChop, vm.BufferMode.ChopDual}:
+        if capture_mode.analog_channels == 2:
             address -= address % 2
         traces = DotDict()
         for dump_channel, channel in enumerate(sorted(analog_channels)):
@@ -412,7 +407,12 @@ async def main():
     s = await Scope.connect(args.device)
 
 def await(g):
-    return asyncio.get_event_loop().run_until_complete(g)
+    task = asyncio.Task(g)
+    while True:
+        try:
+            return asyncio.get_event_loop().run_until_complete(task)
+        except KeyboardInterrupt:
+            task.cancel()
 
 def capture(*args, **kwargs):
     return await(s.capture(*args, **kwargs))
