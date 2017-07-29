@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import array
 import asyncio
 from collections import namedtuple
 import logging
@@ -130,7 +131,7 @@ class Scope(vm.VirtualMachine):
                 if nsamples <= buffer_width:
                     break
         else:
-            raise RuntimeError("Unable to find appropriate capture mode")
+            raise ValueError("Unable to find appropriate capture mode")
         
         if raw:
             lo, hi = low, high
@@ -184,7 +185,7 @@ class Scope(vm.VirtualMachine):
         if timeout is None:
             trigger_timeout = 0
         else:
-            trigger_timeout = max(1, int(math.ceil(((trigger_intro+trigger_outro+trace_outro)*ticks*clock_scale*self.capture_clock_period
+            trigger_timeout = max(1, int(math.ceil(((trigger_intro+trigger_outro+trace_outro+2)*ticks*clock_scale*self.capture_clock_period
                                                     + timeout)/self.timeout_clock_period)))
 
         async with self.transaction():
@@ -215,6 +216,7 @@ class Scope(vm.VirtualMachine):
             address -= address % 2
 
         traces = DotDict()
+        timestamps = array.array('d', (t*self.capture_clock_period for t in range(start_timestamp, timestamp, ticks*clock_scale)))
         for dump_channel, channel in enumerate(sorted(analog_channels)):
             asamples = nsamples // len(analog_channels)
             async with self.transaction():
@@ -225,11 +227,8 @@ class Scope(vm.VirtualMachine):
                 await self.issue_analog_dump_binary()
             value_multiplier, value_offset = (1, 0) if raw else ((high-low), low+self.analog_offsets[channel])
             data = await self.read_analog_samples(asamples, capture_mode.sample_width)
-            data = (value*value_multiplier + value_offset for value in data)
-            ts = (t*self.capture_clock_period for t in range(start_timestamp+dump_channel*ticks*clock_scale, timestamp,
-                                                             ticks*clock_scale*len(analog_channels)))
-            traces[channel] = dict(zip(ts, data))
-
+            traces[channel] = DotDict({'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
+                                       'samples': array.array('d', (value*value_multiplier+value_offset for value in data))})
         if logic_channels:
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) % buffer_width,
@@ -237,11 +236,10 @@ class Scope(vm.VirtualMachine):
                 await self.issue_program_spock_registers()
                 await self.issue_analog_dump_binary()
             data = await self.read_logic_samples(nsamples)
-            ts = [t*self.capture_clock_period for t in range(start_timestamp, timestamp, ticks*clock_scale)]
             for i in logic_channels:
                 mask = 1<<i
-                traces[f'L{i}'] = {t: 1 if value & mask else 0 for (t, value) in zip(ts, data)}
-
+                traces[f'L{i}'] = DotDict({'timestamps': timestamps,
+                                           'samples': array.array('B', (1 if value & mask else 0 for value in data))})
         return traces
 
     async def start_generator(self, frequency, waveform='sine', wavetable=None, ratio=0.5,
@@ -383,17 +381,13 @@ INFO:scope:Initialised scope, revision: BS000501
 In [3]: generate(2000, 'triangle')
 Out[3]: 2000.0
 
-In [4]: t = pandas.DataFrame(capture(['A', 'B'], low=0, high=3.3))
+In [4]: capturep(['A', 'B'], low=0, high=3.3).interpolate().plot()
+Out[4]: <matplotlib.axes._subplots.AxesSubplot at 0x10db77d30>
 
-In [5]: t.interpolate().plot()
-Out[5]: <matplotlib.axes._subplots.AxesSubplot at 0x10db77d30>
+In [5]: capturep(['L'], low=0, high=3.3)).plot()
+Out[5]: <matplotlib.axes._subplots.AxesSubplot at 0x10d05d5f8>
 
-In [6]: t = pandas.DataFrame(capture(['L'], low=0, high=3.3))
-
-In [7]: t.plot()
-Out[7]: <matplotlib.axes._subplots.AxesSubplot at 0x10d05d5f8>
-
-In [8]: 
+In [6]: 
 """
 
 async def main():
@@ -418,7 +412,8 @@ def capture(*args, **kwargs):
 
 def capturep(*args, **kwargs):
     import pandas
-    return pandas.DataFrame(capture(*args, **kwargs))
+    traces = capture(*args, **kwargs)
+    return pandas.DataFrame({channel: pandas.Series(trace.samples, trace.timestamps) for (channel,trace) in traces.items()})
 
 def calibrate(*args, **kwargs):
     return await(s.calibrate(*args, **kwargs))
