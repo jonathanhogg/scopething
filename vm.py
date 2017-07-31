@@ -162,8 +162,8 @@ CaptureMode = namedtuple('CaptureMode', ('clock_low', 'clock_high', 'clock_max',
                                          'logic_channels', 'clock_divide', 'trace_mode', 'buffer_mode'))
 
 CaptureModes = [
-    CaptureMode(40, 65536, None, 1, 2, False, False, TraceMode.Macro,          BufferMode.Macro),
-    CaptureMode(40, 65536, None, 2, 2, False, False, TraceMode.MacroChop,      BufferMode.MacroChop),
+    CaptureMode(40, 65535, None, 1, 2, False, False, TraceMode.Macro,          BufferMode.Macro),
+    CaptureMode(40, 65535, None, 2, 2, False, False, TraceMode.MacroChop,      BufferMode.MacroChop),
     CaptureMode(15,    40, None, 1, 1, False, True,  TraceMode.Analog,         BufferMode.Single),
     CaptureMode(13,    40, None, 2, 1, False, True,  TraceMode.AnalogChop,     BufferMode.Chop),
     CaptureMode( 8,    14, None, 1, 1, False, False, TraceMode.AnalogFast,     BufferMode.Single),
@@ -355,12 +355,11 @@ class VirtualMachine:
         if self._transactions:
             raise TypeError("Command transaction in progress")
         if sample_width == 2:
-            data = await self._reader.readexactly(2 * n)
-            data = struct.unpack(f'>{n}h', data)
-            return array.array('d', ((value+32768)/65535 for value in data))
+            data = await self._reader.readexactly(2*n)
+            return array.array('f', ((value+32768)/65535 for (value,) in struct.iter_unpack('>h', data)))
         elif sample_width == 1:
             data = await self._reader.readexactly(n)
-            return array.array('d', (value/255 for value in data))
+            return array.array('f', (value/255 for value in data))
         else:
             raise ValueError(f"Bad sample width: {sample_width}")
 

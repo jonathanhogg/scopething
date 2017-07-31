@@ -217,6 +217,9 @@ class Scope(vm.VirtualMachine):
 
         traces = DotDict()
         timestamps = array.array('d', (t*self.capture_clock_period for t in range(start_timestamp, timestamp, ticks*clock_scale)))
+        sample_period = ticks*clock_scale*self.capture_clock_period
+        sample_rate = 1/sample_period
+        start_time = start_timestamp*self.capture_clock_period
         for dump_channel, channel in enumerate(sorted(analog_channels)):
             asamples = nsamples // len(analog_channels)
             async with self.transaction():
@@ -228,7 +231,10 @@ class Scope(vm.VirtualMachine):
             value_multiplier, value_offset = (1, 0) if raw else ((high-low), low+self.analog_offsets[channel])
             data = await self.read_analog_samples(asamples, capture_mode.sample_width)
             traces[channel] = DotDict({'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
-                                       'samples': array.array('d', (value*value_multiplier+value_offset for value in data))})
+                                       'samples': array.array('d', (value*value_multiplier+value_offset for value in data)),
+                                       'start_time': start_time+sample_period*dump_channel,
+                                       'sample_period': sample_period*len(analog_channels),
+                                       'sample_rate': sample_rate/len(analog_channels)})
         if logic_channels:
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) % buffer_width,
@@ -239,7 +245,10 @@ class Scope(vm.VirtualMachine):
             for i in logic_channels:
                 mask = 1<<i
                 traces[f'L{i}'] = DotDict({'timestamps': timestamps,
-                                           'samples': array.array('B', (1 if value & mask else 0 for value in data))})
+                                           'samples': array.array('B', (1 if value & mask else 0 for value in data)),
+                                           'start_time': start_time,
+                                           'sample_period': sample_period,
+                                           'sample_rate': sample_rate})
         return traces
 
     async def start_generator(self, frequency, waveform='sine', wavetable=None, ratio=0.5,
@@ -327,13 +336,13 @@ class Scope(vm.VirtualMachine):
         await self.start_generator(frequency=1000, waveform='square')
         for lo in np.linspace(self.analog_lo_min, 0.5, n, endpoint=False):
             for hi in np.linspace(0.5, self.analog_hi_max, n):
-                data = await self.capture(channels=['A','B'], period=2e-3, nsamples=2000, timeout=0, low=lo, high=hi, raw=True)
-                A = np.fromiter(data['A'].values(), count=1000, dtype='float')
+                traces = await self.capture(channels=['A','B'], period=2e-3, nsamples=2000, timeout=0, low=lo, high=hi, raw=True)
+                A = np.array(traces.A.samples)
                 A.sort()
                 Azero, Amax = A[25:475].mean(), A[525:975].mean()
                 if Azero < 0.01 or Amax > 0.99:
                     continue
-                B = np.fromiter(data['B'].values(), count=1000, dtype='float')
+                B = np.array(traces.B.samples)
                 B.sort()
                 Bzero, Bmax = B[25:475].mean(), B[525:975].mean()
                 if Bzero < 0.01 or Bmax > 0.99:
