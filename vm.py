@@ -24,79 +24,120 @@ import struct
 Log = logging.getLogger('vm')
 
 
+class Register(namedtuple('Register', ['base', 'dtype', 'description'])):
+    def encode(self, value):
+        sign = self.dtype[0]
+        if '.' in self.dtype:
+            whole, fraction = map(int, self.dtype[1:].split('.', 1))
+            width = whole + fraction
+            value = int(round(value * (1 << fraction)))
+        else:
+            width = int(self.dtype[1:])
+        if sign == 'U':
+            n = 1 << width
+            value = max(0, min(value, n-1))
+            bs = struct.pack('<I', value)
+        elif sign == 'S':
+            n = 1 << (width - 1)
+            value = max(-n, min(value, n-1))
+            bs = struct.pack('<i', value)
+        else:
+            raise TypeError("Unrecognised dtype")
+        return bs[:width//8]
+    def decode(self, bs):
+        if len(bs) < 4:
+            bs = bs + bytes(4 - len(bs))
+        sign = self.dtype[0]
+        if sign == 'U':
+            value = struct.unpack('<I', bs)[0]
+        elif sign == 'S':
+            value = struct.unpack('<i', bs)[0]
+        else:
+            raise TypeError("Unrecognised dtype")
+        if '.' in self.dtype:
+            whole, fraction = map(int, self.dtype[1:].split('.', 1))
+            value = value / (1 << fraction)
+        return value
+    def calculate_width(self):
+        if '.' in self.dtype:
+            return sum(map(int, self.dtype[1:].split('.', 1))) // 8
+        else:
+            return int(self.dtype[1:]) // 8
+
+
 Registers = {
-    "TriggerLogic": (0x05, 'U8', "Trigger Logic, one bit per channel (0 => Low, 1 => High)"),
-    "TriggerMask": (0x06, 'U8', "Trigger Mask, one bit per channel (0 => Don’t Care, 1 => Active)"),
-    "SpockOption": (0x07, 'U8', "Spock Option Register (see bit definition table for details)"),
-    "SampleAddress": (0x08, 'U24', "Sample address (write) 24 bit"),
-    "SampleCounter": (0x0b, 'U24', "Sample address (read) 24 bit"),
-    "TriggerIntro": (0x32, 'U16', "Edge trigger intro filter counter (samples/2)"),
-    "TriggerOutro": (0x34, 'U16', "Edge trigger outro filter counter (samples/2)"),
-    "TriggerValue": (0x44, 'S0.16', "Digital (comparator) trigger (signed)"),
-    "TriggerTime": (0x40, 'U32', "Stopwatch trigger time (ticks)"),
-    "ClockTicks": (0x2e, 'U16', "Master Sample (clock) period (ticks)"),
-    "ClockScale": (0x14, 'U16', "Clock divide by N (low byte)"),
-    "TraceOption": (0x20, 'U8', "Trace Mode Option bits"),
-    "TraceMode": (0x21, 'U8', "Trace Mode (see Trace Mode Table)"),
-    "TraceIntro": (0x26, 'U16', "Pre-trigger capture count (samples)"),
-    "TraceDelay": (0x22, 'U32', "Delay period (uS)"),
-    "TraceOutro": (0x2a, 'U16', "Post-trigger capture count (samples)"),
-    "Timeout": (0x2c, 'U16', "Auto trace timeout (auto-ticks)"),
-    "Prelude": (0x3a, 'U16', "Buffer prefill value"),
-    "BufferMode": (0x31, 'U8', "Buffer mode"),
-    "DumpMode": (0x1e, 'U8', "Dump mode"),
-    "DumpChan": (0x30, 'U8', "Dump (buffer) Channel (0..127,128..254,255)"),
-    "DumpSend": (0x18, 'U16', "Dump send (samples)"),
-    "DumpSkip": (0x1a, 'U16', "Dump skip (samples)"),
-    "DumpCount": (0x1c, 'U16', "Dump size (samples)"),
-    "DumpRepeat": (0x16, 'U16', "Dump repeat (iterations)"),
-    "StreamIdent": (0x36, 'U8', "Stream data token"),
-    "StampIdent": (0x3c, 'U8', "Timestamp token"),
-    "AnalogEnable": (0x37, 'U8', "Analog channel enable (bitmap)"),
-    "DigitalEnable": (0x38, 'U8', "Digital channel enable (bitmap)"),
-    "SnoopEnable": (0x39, 'U8', "Frequency (snoop) channel enable (bitmap)"),
-    "Cmd": (0x46, 'U8', "Command Vector"),
-    "Mode": (0x47, 'U8', "Operation Mode (per command)"),
-    "Option": (0x48, 'U16', "Command Option (bits fields per command)"),
-    "Size": (0x4a, 'U16', "Operation (unit/block) size"),
-    "Index": (0x4c, 'U16', "Operation index (eg, P Memory Page)"),
-    "Address": (0x4e, 'U16', "General purpose address"),
-    "Clock": (0x50, 'U16', "Sample (clock) period (ticks)"),
-    "Modulo": (0x52, 'U16', "Modulo Size (generic)"),
-    "Level": (0x54, 'U0.16', "Output (analog) attenuation (unsigned)"),
-    "Offset": (0x56, 'S0.16', "Output (analog) offset (signed)"),
-    "Mask": (0x58, 'U16', "Translate source modulo mask"),
-    "Ratio": (0x5a, 'U16.16', "Translate command ratio (phase step)"),
-    "Mark": (0x5e, 'U16', "Mark count/phase (ticks/step)"),
-    "Space": (0x60, 'U16', "Space count/phase (ticks/step)"),
-    "Rise": (0x82, 'U16', "Rising edge clock (channel 1) phase (ticks)"),
-    "Fall": (0x84, 'U16', "Falling edge clock (channel 1) phase (ticks)"),
-    "Control": (0x86, 'U8', "Clock Control Register (channel 1)"),
-    "Rise2": (0x88, 'U16', "Rising edge clock (channel 2) phase (ticks)"),
-    "Fall2": (0x8a, 'U16', "Falling edge clock (channel 2) phase (ticks)"),
-    "Control2": (0x8c, 'U8', "Clock Control Register (channel 2)"),
-    "Rise3": (0x8e, 'U16', "Rising edge clock (channel 3) phase (ticks)"),
-    "Fall3": (0x90, 'U16', "Falling edge clock (channel 3) phase (ticks)"),
-    "Control3": (0x92, 'U8', "Clock Control Register (channel 3)"),
-    "EepromData": (0x10, 'U8', "EE Data Register"),
-    "EepromAddress": (0x11, 'U8', "EE Address Register"),
-    "ConverterLo": (0x64, 'U0.16', "VRB ADC Range Bottom (D Trace Mode)"),
-    "ConverterHi": (0x66, 'U0.16', "VRB ADC Range Top (D Trace Mode)"),
-    "TriggerLevel": (0x68, 'U0.16', "Trigger Level (comparator, unsigned)"),
-    "LogicControl": (0x74, 'U8', "Logic Control"),
-    "Rest": (0x78, 'U16', "DAC (rest) level"),
-    "KitchenSinkA": (0x7b, 'U8', "Kitchen Sink Register A"),
-    "KitchenSinkB": (0x7c, 'U8', "Kitchen Sink Register B"),
-    "Map0": (0x94, 'U8', "Peripheral Pin Select Channel 0"),
-    "Map1": (0x95, 'U8', "Peripheral Pin Select Channel 1"),
-    "Map2": (0x96, 'U8', "Peripheral Pin Select Channel 2"),
-    "Map3": (0x97, 'U8', "Peripheral Pin Select Channel 3"),
-    "Map4": (0x98, 'U8', "Peripheral Pin Select Channel 4"),
-    "Map5": (0x99, 'U8', "Peripheral Pin Select Channel 5"),
-    "Map6": (0x9a, 'U8', "Peripheral Pin Select Channel 6"),
-    "Map7": (0x9b, 'U8', "Peripheral Pin Select Channel 7"),
-    "MasterClockN": (0xf7, 'U8', "PLL prescale (DIV N)"),
-    "MasterClockM": (0xf8, 'U16', "PLL multiplier (MUL M)"),
+    "TriggerLogic": Register(0x05, 'U8', "Trigger Logic, one bit per channel (0 => Low, 1 => High)"),
+    "TriggerMask": Register(0x06, 'U8', "Trigger Mask, one bit per channel (0 => Don’t Care, 1 => Active)"),
+    "SpockOption": Register(0x07, 'U8', "Spock Option Register (see bit definition table for details)"),
+    "SampleAddress": Register(0x08, 'U24', "Sample address (write) 24 bit"),
+    "SampleCounter": Register(0x0b, 'U24', "Sample address (read) 24 bit"),
+    "TriggerIntro": Register(0x32, 'U16', "Edge trigger intro filter counter (samples/2)"),
+    "TriggerOutro": Register(0x34, 'U16', "Edge trigger outro filter counter (samples/2)"),
+    "TriggerValue": Register(0x44, 'S0.16', "Digital (comparator) trigger (signed)"),
+    "TriggerTime": Register(0x40, 'U32', "Stopwatch trigger time (ticks)"),
+    "ClockTicks": Register(0x2e, 'U16', "Master Sample (clock) period (ticks)"),
+    "ClockScale": Register(0x14, 'U16', "Clock divide by N (low byte)"),
+    "TraceOption": Register(0x20, 'U8', "Trace Mode Option bits"),
+    "TraceMode": Register(0x21, 'U8', "Trace Mode (see Trace Mode Table)"),
+    "TraceIntro": Register(0x26, 'U16', "Pre-trigger capture count (samples)"),
+    "TraceDelay": Register(0x22, 'U32', "Delay period (uS)"),
+    "TraceOutro": Register(0x2a, 'U16', "Post-trigger capture count (samples)"),
+    "Timeout": Register(0x2c, 'U16', "Auto trace timeout (auto-ticks)"),
+    "Prelude": Register(0x3a, 'U16', "Buffer prefill value"),
+    "BufferMode": Register(0x31, 'U8', "Buffer mode"),
+    "DumpMode": Register(0x1e, 'U8', "Dump mode"),
+    "DumpChan": Register(0x30, 'U8', "Dump (buffer) Channel (0..127,128..254,255)"),
+    "DumpSend": Register(0x18, 'U16', "Dump send (samples)"),
+    "DumpSkip": Register(0x1a, 'U16', "Dump skip (samples)"),
+    "DumpCount": Register(0x1c, 'U16', "Dump size (samples)"),
+    "DumpRepeat": Register(0x16, 'U16', "Dump repeat (iterations)"),
+    "StreamIdent": Register(0x36, 'U8', "Stream data token"),
+    "StampIdent": Register(0x3c, 'U8', "Timestamp token"),
+    "AnalogEnable": Register(0x37, 'U8', "Analog channel enable (bitmap)"),
+    "DigitalEnable": Register(0x38, 'U8', "Digital channel enable (bitmap)"),
+    "SnoopEnable": Register(0x39, 'U8', "Frequency (snoop) channel enable (bitmap)"),
+    "Cmd": Register(0x46, 'U8', "Command Vector"),
+    "Mode": Register(0x47, 'U8', "Operation Mode (per command)"),
+    "Option": Register(0x48, 'U16', "Command Option (bits fields per command)"),
+    "Size": Register(0x4a, 'U16', "Operation (unit/block) size"),
+    "Index": Register(0x4c, 'U16', "Operation index (eg, P Memory Page)"),
+    "Address": Register(0x4e, 'U16', "General purpose address"),
+    "Clock": Register(0x50, 'U16', "Sample (clock) period (ticks)"),
+    "Modulo": Register(0x52, 'U16', "Modulo Size (generic)"),
+    "Level": Register(0x54, 'U0.16', "Output (analog) attenuation (unsigned)"),
+    "Offset": Register(0x56, 'S0.16', "Output (analog) offset (signed)"),
+    "Mask": Register(0x58, 'U16', "Translate source modulo mask"),
+    "Ratio": Register(0x5a, 'U16.16', "Translate command ratio (phase step)"),
+    "Mark": Register(0x5e, 'U16', "Mark count/phase (ticks/step)"),
+    "Space": Register(0x60, 'U16', "Space count/phase (ticks/step)"),
+    "Rise": Register(0x82, 'U16', "Rising edge clock (channel 1) phase (ticks)"),
+    "Fall": Register(0x84, 'U16', "Falling edge clock (channel 1) phase (ticks)"),
+    "Control": Register(0x86, 'U8', "Clock Control Register (channel 1)"),
+    "Rise2": Register(0x88, 'U16', "Rising edge clock (channel 2) phase (ticks)"),
+    "Fall2": Register(0x8a, 'U16', "Falling edge clock (channel 2) phase (ticks)"),
+    "Control2": Register(0x8c, 'U8', "Clock Control Register (channel 2)"),
+    "Rise3": Register(0x8e, 'U16', "Rising edge clock (channel 3) phase (ticks)"),
+    "Fall3": Register(0x90, 'U16', "Falling edge clock (channel 3) phase (ticks)"),
+    "Control3": Register(0x92, 'U8', "Clock Control Register (channel 3)"),
+    "EepromData": Register(0x10, 'U8', "EE Data Register"),
+    "EepromAddress": Register(0x11, 'U8', "EE Address Register"),
+    "ConverterLo": Register(0x64, 'U0.16', "VRB ADC Range Bottom (D Trace Mode)"),
+    "ConverterHi": Register(0x66, 'U0.16', "VRB ADC Range Top (D Trace Mode)"),
+    "TriggerLevel": Register(0x68, 'U0.16', "Trigger Level (comparator, unsigned)"),
+    "LogicControl": Register(0x74, 'U8', "Logic Control"),
+    "Rest": Register(0x78, 'U16', "DAC (rest) level"),
+    "KitchenSinkA": Register(0x7b, 'U8', "Kitchen Sink Register A"),
+    "KitchenSinkB": Register(0x7c, 'U8', "Kitchen Sink Register B"),
+    "Map0": Register(0x94, 'U8', "Peripheral Pin Select Channel 0"),
+    "Map1": Register(0x95, 'U8', "Peripheral Pin Select Channel 1"),
+    "Map2": Register(0x96, 'U8', "Peripheral Pin Select Channel 2"),
+    "Map3": Register(0x97, 'U8', "Peripheral Pin Select Channel 3"),
+    "Map4": Register(0x98, 'U8', "Peripheral Pin Select Channel 4"),
+    "Map5": Register(0x99, 'U8', "Peripheral Pin Select Channel 5"),
+    "Map6": Register(0x9a, 'U8', "Peripheral Pin Select Channel 6"),
+    "Map7": Register(0x9b, 'U8', "Peripheral Pin Select Channel 7"),
+    "MasterClockN": Register(0xf7, 'U8', "PLL prescale (DIV N)"),
+    "MasterClockM": Register(0xf8, 'U16', "PLL multiplier (MUL M)"),
 }
 
 class TraceMode(IntEnum):
@@ -181,45 +222,6 @@ CaptureModes = [
     CaptureMode( 4,     7, 5,    2, 1, True,  False, TraceMode.MixedShotChop,  BufferMode.ChopDual),
 ]
 
-def encode(value, dtype):
-    sign = dtype[0]
-    if '.' in dtype:
-        whole, fraction = map(int, dtype[1:].split('.', 1))
-        width = whole + fraction
-        value = int(round(value * (1 << fraction)))
-    else:
-        width = int(dtype[1:])
-    if sign == 'U':
-        n = 1 << width
-        value = max(0, min(value, n-1))
-        bs = struct.pack('<I', value)
-    elif sign == 'S':
-        n = 1 << (width - 1)
-        value = max(-n, min(value, n-1))
-        bs = struct.pack('<i', value)
-    else:
-        raise TypeError("Unrecognised type")
-    return bs[:width//8]
-
-def decode(bs, dtype):
-    if len(bs) < 4:
-        bs = bs + bytes(4 - len(bs))
-    sign = dtype[0]
-    if sign == 'U':
-        value = struct.unpack('<I', bs)[0]
-    elif sign == 'S':
-        value = struct.unpack('<i', bs)[0]
-    if '.' in dtype:
-        whole, fraction = map(int, dtype[1:].split('.', 1))
-        value = value / (1 << fraction)
-    return value
-
-def calculate_width(dtype):
-    if '.' in dtype:
-        return sum(map(int, dtype[1:].split('.', 1))) // 8
-    else:
-        return int(dtype[1:]) // 8
-
 
 class VirtualMachine:
 
@@ -301,9 +303,9 @@ class VirtualMachine:
     async def set_registers(self, **kwargs):
         cmd = ''
         r0 = r1 = None
-        for base, name in sorted((Registers[name][0], name) for name in kwargs):
-            base, dtype, desc = Registers[name]
-            bs = encode(kwargs[name], dtype)
+        for base, name in sorted((Registers[name].base, name) for name in kwargs):
+            register = Registers[name]
+            bs = register.encode(kwargs[name])
             Log.debug(f"{name} = 0x{''.join(f'{b:02x}' for b in reversed(bs))}")
             for i, byte in enumerate(bs):
                 if cmd:
@@ -323,15 +325,15 @@ class VirtualMachine:
             await self.issue(cmd + 's')
 
     async def get_register(self, name):
-        base, dtype, desc = Registers[name]
-        await self.issue(f'{base:02x}@p')
+        register = Registers[name]
+        await self.issue(f'{register.base:02x}@p')
         values = []
-        width = calculate_width(dtype)
+        width = register.calculate_width()
         for i in range(width):
             values.append(int((await self.read_replies(2))[1], 16))
             if i < width-1:
                 await self.issue(b'np')
-        return decode(bytes(values), dtype)
+        return register.decode(bytes(values))
 
     async def issue_get_revision(self):
         await self.issue(b'?')

@@ -59,6 +59,8 @@ class Scope(vm.VirtualMachine):
             self.analog_default_high = 8
             self.analog_lo_min = 0.07
             self.analog_hi_max = 0.88
+            self.logic_low = 0
+            self.logic_high = 3.3
             self.capture_clock_period = 25e-9
             self.capture_buffer_size = 12<<10
             self.timeout_clock_period = 6.4e-6
@@ -81,6 +83,7 @@ class Scope(vm.VirtualMachine):
         analog_channels = set()
         logic_channels = set()
         for channel in channels:
+            channel = channel.upper()
             if channel in {'A', 'B'}:
                 analog_channels.add(channel)
                 if trigger is None:
@@ -89,7 +92,7 @@ class Scope(vm.VirtualMachine):
                 logic_channels.update(range(8))
                 if trigger is None:
                     trigger = {0: 1}
-            elif channel.startswith('L'):
+            elif channel in {'L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7'}:
                 i = int(channel[1:])
                 logic_channels.add(i)
                 if trigger is None:
@@ -137,11 +140,11 @@ class Scope(vm.VirtualMachine):
             lo, hi = low, high
         else:
             if low is None:
-                low = self.analog_default_low
+                low = self.analog_default_low if analog_channels else self.logic_low
             elif low < self.analog_default_low:
                 Log.warning(f"Voltage range is below safe minimum: {low} < {self.analog_default_low}")
             if high is None:
-                high = self.analog_default_high
+                high = self.analog_default_high if analog_channels else self.logic_high
             elif high > self.analog_default_high:
                 Log.warning(f"Voltage range is above safe maximum: {high} > {self.analog_default_high}")
             lo, hi = self.calculate_lo_hi(low, high)
