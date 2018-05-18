@@ -318,7 +318,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(KitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
             await self.issue_configure_device_hardware()
         self._awg_running = True
-        Log.info(f"Signal generator running at {actualf:0.1f}Hz")
+        Log.info(f"Signal generator running at {actualf:,0.1f}Hz")
         return actualf
 
     async def stop_generator(self):
