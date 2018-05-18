@@ -170,14 +170,23 @@ class Scope(vm.VirtualMachine):
                 spock_option |= vm.SpockOption.TriggerSourceB
                 trigger_logic = 0x40
             trigger_mask = 0xff ^ trigger_logic
-        else:
+        elif isinstance(trigger, dict):
             trigger_logic = 0
             trigger_mask = 0xff
             for channel, value in trigger.items():
+                if isinstance(channel, str):
+                    if channel.startswith('L'):
+                        channel = int(channel[1:])
+                    else:
+                        raise TypeError("Unrecognised trigger value")
+                if channel < 0 or channel > 7:
+                    raise TypeError("Unrecognised trigger value")
                 mask = 1<<channel
                 trigger_mask &= ~mask
                 if value:
                     trigger_logic |= mask
+        else:
+            raise TypeError("Unrecognised trigger value")
         if trigger_type.lower() in {'falling', 'below'}:
             spock_option |= vm.SpockOption.TriggerInvert
         trigger_outro = 4 if hair_trigger else 8
@@ -191,6 +200,10 @@ class Scope(vm.VirtualMachine):
             trigger_timeout = max(1, int(math.ceil(((trigger_intro+trigger_outro+trace_outro+2)*ticks*clock_scale*self.capture_clock_period
                                                     + timeout)/self.timeout_clock_period)))
 
+        sample_period = ticks*clock_scale*self.capture_clock_period
+        sample_rate = 1/sample_period
+        Log.info(f"Begin {('mixed' if logic_channels else 'analogue') if analog_channels else 'logic'} signal capture "
+                  f"at {sample_rate:,.0f} samples per second (trace mode {capture_mode.trace_mode.name})")
         async with self.transaction():
             await self.set_registers(TraceMode=capture_mode.trace_mode, BufferMode=capture_mode.buffer_mode,
                                      SampleAddress=0, ClockTicks=ticks, ClockScale=clock_scale,
@@ -210,6 +223,7 @@ class Scope(vm.VirtualMachine):
                     break
             except asyncio.CancelledError:
                 await self.issue_cancel_trace()
+        cause = {vm.TraceStatus.Done: 'trigger', vm.TraceStatus.Auto: 'timeout', vm.TraceStatus.Stop: 'cancel'}[code]
         start_timestamp = timestamp - nsamples*ticks*clock_scale
         if start_timestamp < 0:
             start_timestamp += 1<<32
@@ -220,8 +234,6 @@ class Scope(vm.VirtualMachine):
 
         traces = DotDict()
         timestamps = array.array('d', (t*self.capture_clock_period for t in range(start_timestamp, timestamp, ticks*clock_scale)))
-        sample_period = ticks*clock_scale*self.capture_clock_period
-        sample_rate = 1/sample_period
         start_time = start_timestamp*self.capture_clock_period
         for dump_channel, channel in enumerate(sorted(analog_channels)):
             asamples = nsamples // len(analog_channels)
@@ -237,7 +249,8 @@ class Scope(vm.VirtualMachine):
                                        'samples': array.array('d', (value*value_multiplier+value_offset for value in data)),
                                        'start_time': start_time+sample_period*dump_channel,
                                        'sample_period': sample_period*len(analog_channels),
-                                       'sample_rate': sample_rate/len(analog_channels)})
+                                       'sample_rate': sample_rate/len(analog_channels),
+                                       'cause': cause})
         if logic_channels:
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) % buffer_width,
@@ -251,7 +264,9 @@ class Scope(vm.VirtualMachine):
                                            'samples': array.array('B', (1 if value & mask else 0 for value in data)),
                                            'start_time': start_time,
                                            'sample_period': sample_period,
-                                           'sample_rate': sample_rate})
+                                           'sample_rate': sample_rate,
+                                           'cause': cause})
+        Log.info(f"{nsamples} samples captured on {cause}, traces: {', '.join(traces)}")
         return traces
 
     async def start_generator(self, frequency, waveform='sine', wavetable=None, ratio=0.5,
@@ -303,6 +318,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(KitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
             await self.issue_configure_device_hardware()
         self._awg_running = True
+        Log.info(f"Signal generator running at {actualf:0.1f}Hz")
         return actualf
 
     async def stop_generator(self):
@@ -311,6 +327,7 @@ class Scope(vm.VirtualMachine):
             await self.issue_control_waveform_generator()
             await self.set_registers(KitchenSinkB=0)
             await self.issue_configure_device_hardware()
+        Log.info("Signal generator stopped")
         self._awg_running = False
 
     async def read_wavetable(self):
@@ -407,8 +424,9 @@ async def main():
     parser = argparse.ArgumentParser(description="scopething")
     parser.add_argument('device', nargs='?', default=None, type=str, help="Device to connect to")
     parser.add_argument('--debug', action='store_true', default=False, help="Debug logging")
+    parser.add_argument('--verbose', action='store_true', default=False, help="Verbose logging")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, stream=sys.stdout)
+    logging.basicConfig(level=logging.DEBUG if args.debug else (logging.INFO if args.verbose else logging.WARNING), stream=sys.stdout)
     s = await Scope.connect(args.device)
 
 def await(g):
