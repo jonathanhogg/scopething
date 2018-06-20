@@ -21,7 +21,7 @@ import logging
 import struct
 
 
-Log = logging.getLogger('vm')
+LOG = logging.getLogger('vm')
 
 
 class Register(namedtuple('Register', ['base', 'dtype', 'description'])):
@@ -262,7 +262,7 @@ class VirtualMachine:
         if isinstance(cmd, str):
             cmd = cmd.encode('ascii')
         if not self._transactions:
-            Log.debug(f"Issue: {cmd!r}")
+            LOG.debug(f"Issue: {cmd!r}")
             self._writer.write(cmd)
             await self._writer.drain()
             echo = await self._reader.readexactly(len(cmd))
@@ -280,7 +280,7 @@ class VirtualMachine:
             index = data.find(b'\r')
             if index >= 0:
                 reply = data[:index]
-                Log.debug(f"Read reply: {reply!r}")
+                LOG.debug(f"Read reply: {reply!r}")
                 replies.append(reply)
                 data = data[index+1:]
             else:
@@ -292,13 +292,13 @@ class VirtualMachine:
     async def reset(self):
         if self._transactions:
             raise TypeError("Command transaction in progress")
-        Log.debug("Issue reset")
+        LOG.debug("Issue reset")
         self._writer.write(b'!')
         await self._writer.drain()
         while not (await self._reader.read()).endswith(b'!'):
             pass
         self._reply_buffer = b''
-        Log.debug("Reset complete")
+        LOG.debug("Reset complete")
 
     async def set_registers(self, **kwargs):
         cmd = ''
@@ -306,7 +306,7 @@ class VirtualMachine:
         for base, name in sorted((Registers[name].base, name) for name in kwargs):
             register = Registers[name]
             bs = register.encode(kwargs[name])
-            Log.debug(f"{name} = 0x{''.join(f'{b:02x}' for b in reversed(bs))}")
+            LOG.debug(f"{name} = 0x{''.join(f'{b:02x}' for b in reversed(bs))}")
             for i, byte in enumerate(bs):
                 if cmd:
                     cmd += 'z'

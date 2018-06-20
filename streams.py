@@ -7,52 +7,33 @@ Package for asynchronous serial IO.
 
 import asyncio
 import logging
-import os
 import sys
+
 import serial
 from serial.tools.list_ports import comports
 
 
-Log = logging.getLogger('streams')
-
-
-if sys.platform == 'linux':
-
-    import fcntl
-    import struct
-
-    TIOCGSERIAL = 0x541E
-    TIOCSSERIAL = 0x541F
-    ASYNC_LOW_LATENCY = 1<<13
-    SERIAL_STRUCT_FORMAT = '2iI5iH2ci2HPHIL'
-    SERIAL_FLAGS_INDEX = 4
-
-    def set_low_latency(fd):
-        data = list(struct.unpack(SERIAL_STRUCT_FORMAT, fcntl.ioctl(fd, TIOCGSERIAL, b'\0'*struct.calcsize(SERIAL_STRUCT_FORMAT))))
-        data[SERIAL_FLAGS_INDEX] |= ASYNC_LOW_LATENCY
-        fcntl.ioctl(fd, TIOCSSERIAL, struct.pack(SERIAL_STRUCT_FORMAT, *data))
-
-else:
-
-    def set_low_latency(fd):
-        pass
-
+LOG = logging.getLogger('streams')
 
 
 class SerialStream:
 
     @classmethod
-    def stream_matching(cls, vid, pid, **kwargs):
+    def devices_matching(cls, vid=None, pid=None, serial=None):
         for port in comports():
-            if port.vid == vid and port.pid == pid:
-                return SerialStream(port.device, **kwargs)
+            if (vid is None or vid == port.vid) and (pid is None or pid == port.pid) and (serial is None or serial == port.serial_number):
+                yield port.device
+
+    @classmethod
+    def stream_matching(cls, vid=None, pid=None, serial=None, **kwargs):
+        for device in cls.devices_matching(vid, pid, serial):
+            return SerialStream(device, **kwargs)
         raise RuntimeError("No matching serial device")
 
     def __init__(self, device, loop=None, **kwargs):
         self._device = device
         self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
-        set_low_latency(self._connection)
-        Log.debug(f"Opened SerialStream on {device}")
+        LOG.debug(f"Opened SerialStream on {device}")
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._output_buffer = bytes()
         self._output_buffer_empty = None
@@ -71,11 +52,11 @@ class SerialStream:
                 n = self._connection.write(data)
             except serial.SerialTimeoutException:
                 n = 0
-            except:
-                Log.exception("Error writing to stream")
+            except Exception:
+                LOG.exception("Error writing to stream")
                 raise
             if n:
-                Log.debug(f"Write {data[:n]!r}")
+                LOG.debug(f"Write {data[:n]!r}")
             self._output_buffer = data[n:]
         else:
             self._output_buffer += data
@@ -93,11 +74,11 @@ class SerialStream:
         except serial.SerialTimeoutException:
             n = 0
         except Exception as e:
-            Log.exception("Error writing to stream")
+            LOG.exception("Error writing to stream")
             self._output_buffer_empty.set_exception(e)
-            self.remove_writer(self._connection)
+            self._loop.remove_writer(self._connection)
         if n:
-            Log.debug(f"Write {self._output_buffer[:n]!r}")
+            LOG.debug(f"Write {self._output_buffer[:n]!r}")
             self._output_buffer = self._output_buffer[n:]
         if not self._output_buffer:
             self._loop.remove_writer(self._connection)
@@ -108,8 +89,8 @@ class SerialStream:
         while True:
             w = self._connection.in_waiting
             if w:
-                data = self._connection.read(w if n is None else min(n,w))
-                Log.debug(f"Read {data!r}")
+                data = self._connection.read(w if n is None else min(n, w))
+                LOG.debug(f"Read {data!r}")
                 return data
             else:
                 future = self._loop.create_future()

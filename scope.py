@@ -13,7 +13,7 @@ import streams
 import vm
 
 
-Log = logging.getLogger('scope')
+LOG = logging.getLogger('scope')
 
 
 class DotDict(dict):
@@ -24,7 +24,7 @@ class DotDict(dict):
 
 class Scope(vm.VirtualMachine):
 
-    AnalogParams = namedtuple('AnalogParams', ['rd', 'rr', 'rt', 'rb', 'scale', 'offset'])
+    AnalogParams = namedtuple('AnalogParams', ['rd', 'rr', 'rt', 'rb', 'scale', 'offset', 'safe_high', 'safe_low', 'ab_offset'])
 
     @classmethod
     async def connect(cls, device=None):
@@ -34,7 +34,7 @@ class Scope(vm.VirtualMachine):
             reader = writer = streams.SerialStream(device=device)
         elif ':' in device:
             host, port = device.split(':', 1)
-            Log.info(f"Connecting to remote scope at {host}:{port}")
+            LOG.info(f"Connecting to remote scope at {host}:{port}")
             reader, writer = await asyncio.open_connection(host, int(port))
         else:
             raise ValueError(f"Don't know what to do with {device!r}")
@@ -43,7 +43,7 @@ class Scope(vm.VirtualMachine):
         return scope
 
     async def setup(self):
-        Log.info("Resetting scope")
+        LOG.info("Resetting scope")
         await self.reset()
         await self.issue_get_revision()
         revision = ((await self.read_replies(2))[1]).decode('ascii')
@@ -53,10 +53,8 @@ class Scope(vm.VirtualMachine):
             self.awg_sample_buffer_size = 1024
             self.awg_minimum_clock = 33
             self.awg_maximum_voltage = 3.3
-            self.analog_params = self.AnalogParams(20, 300, 335, 355, 18.5, -7.585)
-            self.analog_offsets = {'A': -9.5e-3, 'B': 9.5e-3}
-            self.analog_default_low = -5.5
-            self.analog_default_high = 8
+            self.analog_params = {'x1':  self.AnalogParams(20, 300, 335, 355, 18.5, -7.585, 7.9, -5.5, 19e-3),
+                                  'x10': self.AnalogParams(20, 303, 350, 355, 187.3, -91.9, 64.2, -70.2, 234e-3)}
             self.analog_lo_min = 0.07
             self.analog_hi_max = 0.88
             self.logic_low = 0
@@ -68,10 +66,21 @@ class Scope(vm.VirtualMachine):
         else:
             raise RuntimeError(f"Unsupported scope, revision: {revision}")
         self._awg_running = False
-        Log.info(f"Initialised scope, revision: {revision}")
+        LOG.info(f"Initialised scope, revision: {revision}")
 
-    def calculate_lo_hi(self, low, high, params=None):
-        params = self.analog_params if params is None else self.AnalogParams(*params)
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def close(self):
+        super().close()
+        LOG.info("Closed scope")
+
+    def calculate_lo_hi(self, low, high, params):
+        if not isinstance(params, self.AnalogParams):
+            params = self.AnalogParams(*(list(params) + [None]*(9-len(params))))
         l = (low - params.offset) / params.scale
         h = (high - params.offset) / params.scale
         dl = l - params.rd*(h-l)/params.rr + params.rd*l/params.rb
@@ -79,7 +88,7 @@ class Scope(vm.VirtualMachine):
         return dl, dh
 
     async def capture(self, channels=['A'], trigger=None, trigger_level=None, trigger_type='rising', hair_trigger=False,
-                      period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False, trigger_position=0.25):
+                      period=1e-3, nsamples=1000, timeout=None, low=None, high=None, raw=False, trigger_position=0.25, probes='x1'):
         analog_channels = set()
         logic_channels = set()
         for channel in channels:
@@ -136,18 +145,19 @@ class Scope(vm.VirtualMachine):
         else:
             raise ValueError("Unable to find appropriate capture mode")
         
+        analog_params = self.analog_params[probes]
         if raw:
             lo, hi = low, high
         else:
             if low is None:
-                low = self.analog_default_low if analog_channels else self.logic_low
-            elif low < self.analog_default_low:
-                Log.warning(f"Voltage range is below safe minimum: {low} < {self.analog_default_low}")
+                low = analog_params.safe_low if analog_channels else self.logic_low
+            elif low < analog_params.safe_low:
+                LOG.warning(f"Voltage range is below safe minimum: {low} < {analog_params.safe_low}")
             if high is None:
-                high = self.analog_default_high if analog_channels else self.logic_high
-            elif high > self.analog_default_high:
-                Log.warning(f"Voltage range is above safe maximum: {high} > {self.analog_default_high}")
-            lo, hi = self.calculate_lo_hi(low, high)
+                high = analog_params.safe_high if analog_channels else self.logic_high
+            elif high > analog_params.safe_high:
+                LOG.warning(f"Voltage range is above safe maximum: {high} > {analog_params.safe_high}")
+            lo, hi = self.calculate_lo_hi(low, high, analog_params)
 
         spock_option = vm.SpockOption.TriggerTypeHardwareComparator
         kitchen_sink_a = kitchen_sink_b = 0
@@ -161,7 +171,7 @@ class Scope(vm.VirtualMachine):
             kitchen_sink_b |= vm.KitchenSinkB.AnalogFilterEnable
         if trigger_level is None:
             trigger_level = (high + low) / 2
-        trigger_level = (trigger_level - self.analog_params.offset) / self.analog_params.scale
+        trigger_level = (trigger_level - analog_params.offset) / analog_params.scale
         if trigger == 'A' or trigger == 'B':
             if trigger == 'A':
                 spock_option |= vm.SpockOption.TriggerSourceA
@@ -202,7 +212,7 @@ class Scope(vm.VirtualMachine):
 
         sample_period = ticks*clock_scale*self.capture_clock_period
         sample_rate = 1/sample_period
-        Log.info(f"Begin {('mixed' if logic_channels else 'analogue') if analog_channels else 'logic'} signal capture "
+        LOG.info(f"Begin {('mixed' if logic_channels else 'analogue') if analog_channels else 'logic'} signal capture "
                   f"at {sample_rate:,.0f} samples per second (trace mode {capture_mode.trace_mode.name})")
         async with self.transaction():
             await self.set_registers(TraceMode=capture_mode.trace_mode, BufferMode=capture_mode.buffer_mode,
@@ -243,7 +253,7 @@ class Scope(vm.VirtualMachine):
                                          DumpChan=dump_channel, DumpCount=asamples, DumpRepeat=1, DumpSend=1, DumpSkip=0)
                 await self.issue_program_spock_registers()
                 await self.issue_analog_dump_binary()
-            value_multiplier, value_offset = (1, 0) if raw else ((high-low), low+self.analog_offsets[channel])
+            value_multiplier, value_offset = (1, 0) if raw else (high-low, low-analog_params.ab_offset/2*(1 if channel == 'A' else -1))
             data = await self.read_analog_samples(asamples, capture_mode.sample_width)
             traces[channel] = DotDict({'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
                                        'samples': array.array('d', (value*value_multiplier+value_offset for value in data)),
@@ -266,7 +276,7 @@ class Scope(vm.VirtualMachine):
                                            'sample_period': sample_period,
                                            'sample_rate': sample_rate,
                                            'cause': cause})
-        Log.info(f"{nsamples} samples captured on {cause}, traces: {', '.join(traces)}")
+        LOG.info(f"{nsamples} samples captured on {cause}, traces: {', '.join(traces)}")
         return traces
 
     async def start_generator(self, frequency, waveform='sine', wavetable=None, ratio=0.5,
@@ -288,19 +298,19 @@ class Scope(vm.VirtualMachine):
                 actualf = 1 / (width * clock * self.awg_clock_period)
                 error = abs(frequency - actualf) / frequency
                 if error < max_error:
-                    possible_params.append(((error == 0, width), (size, nwaves, clock, actualf)))
+                    possible_params.append((width if error == 0 else -error, (size, nwaves, clock, actualf)))
         if not possible_params:
             raise ValueError("No solution to required frequency/min_samples/max_error")
         size, nwaves, clock, actualf = sorted(possible_params)[-1][1]
         async with self.transaction():
             if wavetable is None:
-                mode = {'sine': 0, 'triangle': 1, 'sawtooth': 1, 'exponential': 2, 'square': 3}[waveform.lower()]
+                mode = {'sine': 0, 'triangle': 1, 'exponential': 2, 'square': 3}[waveform.lower()]
                 await self.set_registers(Cmd=0, Mode=mode, Ratio=ratio)
                 await self.issue_synthesize_wavetable()
             else:
-                wavetable = [min(max(0, int(round(y*255))),255) for y in wavetable]
                 if len(wavetable) != self.awg_wavetable_size:
                     raise ValueError(f"Wavetable data must be {self.awg_wavetable_size} samples")
+                wavetable = bytes(min(max(0, int(round(y*255))),255) for y in wavetable)
                 await self.set_registers(Cmd=0, Mode=1, Address=0, Size=1)
                 await self.wavetable_write_bytes(wavetable)
         async with self.transaction():
@@ -318,7 +328,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(KitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
             await self.issue_configure_device_hardware()
         self._awg_running = True
-        Log.info(f"Signal generator running at {actualf:0.1f}Hz")
+        LOG.info(f"Signal generator running at {actualf:0.1f}Hz")
         return actualf
 
     async def stop_generator(self):
@@ -327,7 +337,7 @@ class Scope(vm.VirtualMachine):
             await self.issue_control_waveform_generator()
             await self.set_registers(KitchenSinkB=0)
             await self.issue_configure_device_hardware()
-        Log.info("Signal generator stopped")
+        LOG.info("Signal generator stopped")
         self._awg_running = False
 
     async def read_wavetable(self):
@@ -349,13 +359,13 @@ class Scope(vm.VirtualMachine):
         if int((await self.read_replies(2))[1], 16) != byte:
             raise RuntimeError("Error writing EEPROM byte")
 
-    async def calibrate(self, n=32):
+    async def calibrate(self, probes='x1', n=32):
         import numpy as np
         from scipy.optimize import least_squares
         items = []
         await self.start_generator(frequency=1000, waveform='square')
         for lo in np.linspace(self.analog_lo_min, 0.5, n, endpoint=False):
-            for hi in np.linspace(0.5, self.analog_hi_max, n):
+            for hi in np.linspace(self.analog_hi_max, 0.5, n):
                 traces = await self.capture(channels=['A','B'], period=2e-3, nsamples=2000, timeout=0, low=lo, high=hi, raw=True)
                 A = np.array(traces.A.samples)
                 A.sort()
@@ -378,22 +388,23 @@ class Scope(vm.VirtualMachine):
         def f(params, lo, hi, low, high, offset):
             clo, chi = self.calculate_lo_hi(low, high, params)
             return np.sqrt((lo-clo)**2 + (hi-chi)**2)
-        result = least_squares(f, self.analog_params, args=items, bounds=([0, 200, 200, 200, 18, -8], [50, 400, 400, 400, 19, -7]))
+        start_params = self.analog_params.get(probes, self.AnalogParams(20, 300, 300, 300, 18.5, -7.585, None, None, None))[:-3]
+        result = least_squares(f, start_params, args=items, bounds=([10, 200, 200, 200, 1, -500], [30, 400, 400, 400, 1000, 0]))
         if result.success:
-            Log.info(f"Calibration succeeded: {result.message}")
-            params = self.analog_params = self.AnalogParams(*result.x)
-            Log.info(f"Analog parameters: rd={params.rd:.1f}Ω rr={params.rr:.1f}Ω rt={params.rt:.1f}Ω rb={params.rb:.1f}Ω "
-                     f"scale={params.scale:.3f}V offset={params.offset:.3f}V")
+            LOG.info(f"Calibration succeeded: {result.message}")
             lo, hi, low, high, offset = items
-            clo, chi = self.calculate_lo_hi(low, high)
+            offset_mean = offset.mean()
+            LOG.info(f"Mean A-B offset: {offset_mean*1000:.1f}mV (+/- {100*offset.std()/offset_mean:.1f}%)")
+            params = self.analog_params[probes] = self.AnalogParams(*result.x, round(items[3,0],1), round(items[2,0],1), offset_mean)
+            LOG.info(f"Analog parameters: rd={params.rd:.1f}Ω rr={params.rr:.1f}Ω rt={params.rt:.1f}Ω rb={params.rb:.1f}Ω "
+                     f"scale={params.scale:.3f}V offset={params.offset:.3f}V "
+                     f"safe_high={params.safe_high:.1f}V safe_low={params.safe_low:.1f}V")
+            clo, chi = self.calculate_lo_hi(low, high, params)
             lo_error = np.sqrt((((clo-lo)/(hi-lo))**2).mean())
             hi_error = np.sqrt((((chi-hi)/(hi-lo))**2).mean())
-            Log.info(f"Mean error: lo={lo_error*10000:.1f}bps hi={hi_error*10000:.1f}bps")
-            offset_mean = offset.mean()
-            Log.info(f"Mean A-B offset: {offset_mean*1000:.1f}mV (+/- {100*offset.std()/offset_mean:.1f}%)")
-            self.analog_offsets = {'A': -offset_mean/2, 'B': +offset_mean/2}
+            LOG.info(f"Mean error: lo={lo_error*10000:.1f}bps hi={hi_error*10000:.1f}bps")
         else:
-            Log.warning(f"Calibration failed: {result.message}")
+            LOG.warning(f"Calibration failed: {result.message}")
         return result.success
 
 
