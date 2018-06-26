@@ -24,6 +24,12 @@ import struct
 LOG = logging.getLogger('vm')
 
 
+class DotDict(dict):
+    __getattr__ = dict.__getitem__
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+
 class Register(namedtuple('Register', ['base', 'dtype', 'description'])):
     def encode(self, value):
         sign = self.dtype[0]
@@ -58,14 +64,25 @@ class Register(namedtuple('Register', ['base', 'dtype', 'description'])):
             whole, fraction = map(int, self.dtype[1:].split('.', 1))
             value = value / (1 << fraction)
         return value
-    def calculate_width(self):
+    @property
+    def maximum_value(self):
+        if '.' in self.dtype:
+            whole, fraction = map(int, self.dtype[1:].split('.', 1))
+        else:
+            whole, fraction = int(self.dtype[1:]), 0
+        if self.dtype[0] == 'S':
+            whole -= 1
+        n = (1<<(whole+fraction)) - 1
+        return n / (1<<fraction) if fraction else n
+    @property
+    def width(self):
         if '.' in self.dtype:
             return sum(map(int, self.dtype[1:].split('.', 1))) // 8
         else:
             return int(self.dtype[1:]) // 8
 
 
-Registers = {
+Registers = DotDict({
     "TriggerLogic": Register(0x05, 'U8', "Trigger Logic, one bit per channel (0 => Low, 1 => High)"),
     "TriggerMask": Register(0x06, 'U8', "Trigger Mask, one bit per channel (0 => Don’t Care, 1 => Active)"),
     "SpockOption": Register(0x07, 'U8', "Spock Option Register (see bit definition table for details)"),
@@ -138,7 +155,7 @@ Registers = {
     "Map7": Register(0x9b, 'U8', "Peripheral Pin Select Channel 7"),
     "MasterClockN": Register(0xf7, 'U8', "PLL prescale (DIV N)"),
     "MasterClockM": Register(0xf8, 'U16', "PLL multiplier (MUL M)"),
-}
+})
 
 class TraceMode(IntEnum):
     Analog         =  0
@@ -199,27 +216,27 @@ class TraceStatus(IntEnum):
     Wait = 0x02
     Stop = 0x03
 
-CaptureMode = namedtuple('CaptureMode', ('clock_low', 'clock_high', 'clock_max', 'analog_channels', 'sample_width',
+CaptureMode = namedtuple('CaptureMode', ('clock_low', 'clock_high', 'analog_channels', 'sample_width',
                                          'logic_channels', 'clock_divide', 'trace_mode', 'buffer_mode'))
 
 CaptureModes = [
-    CaptureMode(40, 65535, None, 1, 2, False, False, TraceMode.Macro,          BufferMode.Macro),
-    CaptureMode(40, 65535, None, 2, 2, False, False, TraceMode.MacroChop,      BufferMode.MacroChop),
-    CaptureMode(15,    40, None, 1, 1, False, True,  TraceMode.Analog,         BufferMode.Single),
-    CaptureMode(13,    40, None, 2, 1, False, True,  TraceMode.AnalogChop,     BufferMode.Chop),
-    CaptureMode( 8,    14, None, 1, 1, False, False, TraceMode.AnalogFast,     BufferMode.Single),
-    CaptureMode( 8,    40, None, 2, 1, False, False, TraceMode.AnalogFastChop, BufferMode.Chop),
-    CaptureMode( 2,     7, 5,    1, 1, False, False, TraceMode.AnalogShot,     BufferMode.Single),
-    CaptureMode( 4,     7, 5,    2, 1, False, False, TraceMode.AnalogShotChop, BufferMode.Chop),
-    CaptureMode( 5, 16384, None, 0, 1, True,  False, TraceMode.Logic,          BufferMode.Single),
-    CaptureMode( 4,     4, None, 0, 1, True,  False, TraceMode.LogicFast,      BufferMode.Single),
-    CaptureMode( 1,     3, None, 0, 1, True,  False, TraceMode.LogicShot,      BufferMode.Single),
-    CaptureMode(15,    40, None, 1, 1, True,  True,  TraceMode.Mixed,          BufferMode.Dual),
-    CaptureMode(13,    40, None, 2, 1, True,  True,  TraceMode.MixedChop,      BufferMode.ChopDual),
-    CaptureMode( 8,    14, None, 1, 1, True,  False, TraceMode.MixedFast,      BufferMode.Dual),
-    CaptureMode( 8,    40, None, 2, 1, True,  False, TraceMode.MixedFastChop,  BufferMode.ChopDual),
-    CaptureMode( 2,     7, 5,    1, 1, True,  False, TraceMode.MixedShot,      BufferMode.Dual),
-    CaptureMode( 4,     7, 5,    2, 1, True,  False, TraceMode.MixedShotChop,  BufferMode.ChopDual),
+    CaptureMode(40, 16384, 1, 2, False, False, TraceMode.Macro,          BufferMode.Macro),
+    CaptureMode(40, 16384, 2, 2, False, False, TraceMode.MacroChop,      BufferMode.MacroChop),
+    CaptureMode(15,    40, 1, 1, False, True,  TraceMode.Analog,         BufferMode.Single),
+    CaptureMode(13,    40, 2, 1, False, True,  TraceMode.AnalogChop,     BufferMode.Chop),
+    CaptureMode( 8,    14, 1, 1, False, False, TraceMode.AnalogFast,     BufferMode.Single),
+    CaptureMode( 8,    40, 2, 1, False, False, TraceMode.AnalogFastChop, BufferMode.Chop),
+    CaptureMode( 2,     5, 1, 1, False, False, TraceMode.AnalogShot,     BufferMode.Single),
+    CaptureMode( 4,     5, 2, 1, False, False, TraceMode.AnalogShotChop, BufferMode.Chop),
+    CaptureMode( 5, 16384, 0, 1, True,  False, TraceMode.Logic,          BufferMode.Single),
+    CaptureMode( 4,     4, 0, 1, True,  False, TraceMode.LogicFast,      BufferMode.Single),
+    CaptureMode( 1,     3, 0, 1, True,  False, TraceMode.LogicShot,      BufferMode.Single),
+    CaptureMode(15,    40, 1, 1, True,  True,  TraceMode.Mixed,          BufferMode.Dual),
+    CaptureMode(13,    40, 2, 1, True,  True,  TraceMode.MixedChop,      BufferMode.ChopDual),
+    CaptureMode( 8,    14, 1, 1, True,  False, TraceMode.MixedFast,      BufferMode.Dual),
+    CaptureMode( 8,    40, 2, 1, True,  False, TraceMode.MixedFastChop,  BufferMode.ChopDual),
+    CaptureMode( 2,     5, 1, 1, True,  False, TraceMode.MixedShot,      BufferMode.Dual),
+    CaptureMode( 4,     5, 2, 1, True,  False, TraceMode.MixedShotChop,  BufferMode.ChopDual),
 ]
 
 
@@ -328,7 +345,7 @@ class VirtualMachine:
         register = Registers[name]
         await self.issue(f'{register.base:02x}@p')
         values = []
-        width = register.calculate_width()
+        width = register.width
         for i in range(width):
             values.append(int((await self.read_replies(2))[1], 16))
             if i < width-1:
