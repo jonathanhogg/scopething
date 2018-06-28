@@ -216,27 +216,27 @@ class TraceStatus(IntEnum):
     Wait = 0x02
     Stop = 0x03
 
-CaptureMode = namedtuple('CaptureMode', ('clock_low', 'clock_high', 'analog_channels', 'sample_width',
-                                         'logic_channels', 'clock_divide', 'trace_mode', 'buffer_mode'))
+CaptureMode = namedtuple('CaptureMode', ('trace_mode', 'clock_low', 'clock_high', 'clock_divide',
+                                         'analog_channels', 'sample_width', 'logic_channels', 'buffer_mode'))
 
 CaptureModes = [
-    CaptureMode(40, 16384, 1, 2, False, False, TraceMode.Macro,          BufferMode.Macro),
-    CaptureMode(40, 16384, 2, 2, False, False, TraceMode.MacroChop,      BufferMode.MacroChop),
-    CaptureMode(15,    40, 1, 1, False, True,  TraceMode.Analog,         BufferMode.Single),
-    CaptureMode(13,    40, 2, 1, False, True,  TraceMode.AnalogChop,     BufferMode.Chop),
-    CaptureMode( 8,    14, 1, 1, False, False, TraceMode.AnalogFast,     BufferMode.Single),
-    CaptureMode( 8,    40, 2, 1, False, False, TraceMode.AnalogFastChop, BufferMode.Chop),
-    CaptureMode( 2,     5, 1, 1, False, False, TraceMode.AnalogShot,     BufferMode.Single),
-    CaptureMode( 4,     5, 2, 1, False, False, TraceMode.AnalogShotChop, BufferMode.Chop),
-    CaptureMode( 5, 16384, 0, 1, True,  False, TraceMode.Logic,          BufferMode.Single),
-    CaptureMode( 4,     4, 0, 1, True,  False, TraceMode.LogicFast,      BufferMode.Single),
-    CaptureMode( 1,     3, 0, 1, True,  False, TraceMode.LogicShot,      BufferMode.Single),
-    CaptureMode(15,    40, 1, 1, True,  True,  TraceMode.Mixed,          BufferMode.Dual),
-    CaptureMode(13,    40, 2, 1, True,  True,  TraceMode.MixedChop,      BufferMode.ChopDual),
-    CaptureMode( 8,    14, 1, 1, True,  False, TraceMode.MixedFast,      BufferMode.Dual),
-    CaptureMode( 8,    40, 2, 1, True,  False, TraceMode.MixedFastChop,  BufferMode.ChopDual),
-    CaptureMode( 2,     5, 1, 1, True,  False, TraceMode.MixedShot,      BufferMode.Dual),
-    CaptureMode( 4,     5, 2, 1, True,  False, TraceMode.MixedShotChop,  BufferMode.ChopDual),
+    CaptureMode(TraceMode.Macro,          40, 16384, False, 1, 2, False, BufferMode.Macro),
+    CaptureMode(TraceMode.MacroChop,      40, 16384, False, 2, 2, False, BufferMode.MacroChop),
+    CaptureMode(TraceMode.Analog,         15,    40, True,  1, 1, False, BufferMode.Single),
+    CaptureMode(TraceMode.AnalogChop,     13,    40, True,  2, 1, False, BufferMode.Chop),
+    CaptureMode(TraceMode.AnalogFast,      8,    14, False, 1, 1, False, BufferMode.Single),
+    CaptureMode(TraceMode.AnalogFastChop,  8,    40, False, 2, 1, False, BufferMode.Chop),
+    CaptureMode(TraceMode.AnalogShot,      2,     5, False, 1, 1, False, BufferMode.Single),
+    CaptureMode(TraceMode.AnalogShotChop,  4,     5, False, 2, 1, False, BufferMode.Chop),
+    CaptureMode(TraceMode.Logic,           5, 16384, False, 0, 1, True,  BufferMode.Single),
+    CaptureMode(TraceMode.LogicFast,       4,     4, False, 0, 1, True,  BufferMode.Single),
+    CaptureMode(TraceMode.LogicShot,       1,     3, False, 0, 1, True,  BufferMode.Single),
+    CaptureMode(TraceMode.Mixed,          15,    40, True,  1, 1, True,  BufferMode.Dual),
+    CaptureMode(TraceMode.MixedChop,      13,    40, True,  2, 1, True,  BufferMode.ChopDual),
+    CaptureMode(TraceMode.MixedFast,       8,    14, False, 1, 1, True,  BufferMode.Dual),
+    CaptureMode(TraceMode.MixedFastChop,   8,    40, False, 2, 1, True,  BufferMode.ChopDual),
+    CaptureMode(TraceMode.MixedShot,       2,     5, False, 1, 1, True,  BufferMode.Dual),
+    CaptureMode(TraceMode.MixedShotChop,   4,     5, False, 2, 1, True,  BufferMode.ChopDual),
 ]
 
 
@@ -421,7 +421,7 @@ class VirtualMachine:
     async def issue_translate_wavetable(self):
         await self.issue(b'X')
 
-    async def issue_control_waveform_generator(self):
+    async def issue_control_clock_generator(self):
         await self.issue(b'Z')
 
     async def issue_read_eeprom(self):
