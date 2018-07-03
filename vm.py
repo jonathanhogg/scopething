@@ -21,7 +21,7 @@ import logging
 import struct
 
 
-LOG = logging.getLogger('vm')
+LOG = logging.getLogger(__name__)
 
 
 class DotDict(dict):
@@ -220,23 +220,23 @@ CaptureMode = namedtuple('CaptureMode', ('trace_mode', 'clock_low', 'clock_high'
                                          'analog_channels', 'sample_width', 'logic_channels', 'buffer_mode'))
 
 CaptureModes = [
-    CaptureMode(TraceMode.Macro,          40, 16384, False, 1, 2, False, BufferMode.Macro),
-    CaptureMode(TraceMode.MacroChop,      40, 16384, False, 2, 2, False, BufferMode.MacroChop),
-    CaptureMode(TraceMode.Analog,         15,    40, True,  1, 1, False, BufferMode.Single),
-    CaptureMode(TraceMode.AnalogChop,     13,    40, True,  2, 1, False, BufferMode.Chop),
-    CaptureMode(TraceMode.AnalogFast,      8,    14, False, 1, 1, False, BufferMode.Single),
-    CaptureMode(TraceMode.AnalogFastChop,  8,    40, False, 2, 1, False, BufferMode.Chop),
-    CaptureMode(TraceMode.AnalogShot,      2,     5, False, 1, 1, False, BufferMode.Single),
-    CaptureMode(TraceMode.AnalogShotChop,  4,     5, False, 2, 1, False, BufferMode.Chop),
-    CaptureMode(TraceMode.Logic,           5, 16384, False, 0, 1, True,  BufferMode.Single),
-    CaptureMode(TraceMode.LogicFast,       4,     4, False, 0, 1, True,  BufferMode.Single),
-    CaptureMode(TraceMode.LogicShot,       1,     3, False, 0, 1, True,  BufferMode.Single),
-    CaptureMode(TraceMode.Mixed,          15,    40, True,  1, 1, True,  BufferMode.Dual),
-    CaptureMode(TraceMode.MixedChop,      13,    40, True,  2, 1, True,  BufferMode.ChopDual),
-    CaptureMode(TraceMode.MixedFast,       8,    14, False, 1, 1, True,  BufferMode.Dual),
-    CaptureMode(TraceMode.MixedFastChop,   8,    40, False, 2, 1, True,  BufferMode.ChopDual),
-    CaptureMode(TraceMode.MixedShot,       2,     5, False, 1, 1, True,  BufferMode.Dual),
-    CaptureMode(TraceMode.MixedShotChop,   4,     5, False, 2, 1, True,  BufferMode.ChopDual),
+    CaptureMode(TraceMode.Macro,          40, 16384,     1, 1, 2, False, BufferMode.Macro),
+    CaptureMode(TraceMode.MacroChop,      40, 16384,     1, 2, 2, False, BufferMode.MacroChop),
+    CaptureMode(TraceMode.Analog,         15,    40, 16383, 1, 1, False, BufferMode.Single),
+    CaptureMode(TraceMode.AnalogChop,     13,    40, 16383, 2, 1, False, BufferMode.Chop),
+    CaptureMode(TraceMode.AnalogFast,      8,    14,     1, 1, 1, False, BufferMode.Single),
+    CaptureMode(TraceMode.AnalogFastChop,  8,    40,     1, 2, 1, False, BufferMode.Chop),
+    CaptureMode(TraceMode.AnalogShot,      2,     5,     1, 1, 1, False, BufferMode.Single),
+    CaptureMode(TraceMode.AnalogShotChop,  4,     5,     1, 2, 1, False, BufferMode.Chop),
+    CaptureMode(TraceMode.Logic,           5, 16384,     1, 0, 1, True,  BufferMode.Single),
+    CaptureMode(TraceMode.LogicFast,       4,     4,     1, 0, 1, True,  BufferMode.Single),
+    CaptureMode(TraceMode.LogicShot,       1,     3,     1, 0, 1, True,  BufferMode.Single),
+    CaptureMode(TraceMode.Mixed,          15,    40, 16383, 1, 1, True,  BufferMode.Dual),
+    CaptureMode(TraceMode.MixedChop,      13,    40, 16383, 2, 1, True,  BufferMode.ChopDual),
+    CaptureMode(TraceMode.MixedFast,       8,    14,     1, 1, 1, True,  BufferMode.Dual),
+    CaptureMode(TraceMode.MixedFastChop,   8,    40,     1, 2, 1, True,  BufferMode.ChopDual),
+    CaptureMode(TraceMode.MixedShot,       2,     5,     1, 1, 1, True,  BufferMode.Dual),
+    CaptureMode(TraceMode.MixedShotChop,   4,     5,     1, 2, 1, True,  BufferMode.ChopDual),
 ]
 
 
@@ -301,18 +301,18 @@ class VirtualMachine:
                 replies.append(reply)
                 data = data[index+1:]
             else:
-                data += await self._reader.read()
+                data += await self._reader.read(100)
         if data:
             self._reply_buffer = data
         return replies
 
-    async def reset(self):
+    async def issue_reset(self):
         if self._transactions:
             raise TypeError("Command transaction in progress")
         LOG.debug("Issue reset")
         self._writer.write(b'!')
         await self._writer.drain()
-        while not (await self._reader.read()).endswith(b'!'):
+        while not (await self._reader.read(1000)).endswith(b'!'):
             pass
         self._reply_buffer = b''
         LOG.debug("Reset complete")
@@ -375,10 +375,10 @@ class VirtualMachine:
             raise TypeError("Command transaction in progress")
         if sample_width == 2:
             data = await self._reader.readexactly(2*n)
-            return array.array('f', ((value+32768)/65535 for (value,) in struct.iter_unpack('>h', data)))
+            return array.array('f', ((value+32768)/65536 for (value,) in struct.iter_unpack('>h', data)))
         elif sample_width == 1:
             data = await self._reader.readexactly(n)
-            return array.array('f', (value/255 for value in data))
+            return array.array('f', (value/256 for value in data))
         else:
             raise ValueError(f"Bad sample width: {sample_width}")
 

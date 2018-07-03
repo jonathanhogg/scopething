@@ -13,21 +13,21 @@ import serial
 from serial.tools.list_ports import comports
 
 
-LOG = logging.getLogger('streams')
+LOG = logging.getLogger(__name__)
 
 
 class SerialStream:
 
     @classmethod
-    def devices_matching(cls, vid=None, pid=None, serial=None):
+    def ports_matching(cls, vid=None, pid=None, serial=None):
         for port in comports():
             if (vid is None or vid == port.vid) and (pid is None or pid == port.pid) and (serial is None or serial == port.serial_number):
-                yield port.device
+                yield port
 
     @classmethod
     def stream_matching(cls, vid=None, pid=None, serial=None, **kwargs):
-        for device in cls.devices_matching(vid, pid, serial):
-            return SerialStream(device, **kwargs)
+        for port in cls.devices_matching(vid, pid, serial):
+            return SerialStream(port.device, **kwargs)
         raise RuntimeError("No matching serial device")
 
     def __init__(self, device, loop=None, **kwargs):
