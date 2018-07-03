@@ -511,25 +511,21 @@ class Scope(vm.VirtualMachine):
 
 
 """
-resistance$ ipython3 --pylab
+$ ipython3 --pylab
 Using matplotlib backend: MacOSX
 
-In [1]: import pandas
+In [1]: run scope
 
-In [2]: run scope
-INFO:scope:Resetting scope
-INFO:scope:Initialised scope, revision: BS000501
+In [2]: start_waveform(2000, 'triangle')
+Out[2]: 2000.0
 
-In [3]: generate(2000, 'triangle')
-Out[3]: 2000.0
+In [3]: traces = capture(['A','B'], period=1e-3, low=0, high=3.3)
 
-In [4]: capturep(['A', 'B'], low=0, high=3.3).interpolate().plot()
-Out[4]: <matplotlib.axes._subplots.AxesSubplot at 0x10db77d30>
+In [4]: plot(traces.A.timestamps, traces.A.samples)
+Out[4]: [<matplotlib.lines.Line2D at 0x10c782160>]
 
-In [5]: capturep(['L'], low=0, high=3.3)).plot()
-Out[5]: <matplotlib.axes._subplots.AxesSubplot at 0x10d05d5f8>
-
-In [6]: 
+In [5]: plot(traces.B.timestamps, traces.B.samples)
+Out[5]: [<matplotlib.lines.Line2D at 0x10e6ea320>]
 """
 
 async def main():
