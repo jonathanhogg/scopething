@@ -8,6 +8,7 @@ Package for asynchronous serial IO.
 import asyncio
 import logging
 import sys
+import threading
 
 import serial
 from serial.tools.list_ports import comports
@@ -30,13 +31,16 @@ class SerialStream:
             return SerialStream(port.device, **kwargs)
         raise RuntimeError("No matching serial device")
 
-    def __init__(self, device, loop=None, **kwargs):
+    def __init__(self, device, use_threads=None, loop=None, **kwargs):
         self._device = device
-        self._connection = serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
+        self._use_threads = sys.platform == 'win32' if use_threads is None else use_threads
+        self._connection = serial.Serial(self._device, **kwargs) if self._use_threads else \
+                           serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
         LOG.debug(f"Opened SerialStream on {device}")
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._output_buffer = bytes()
         self._output_buffer_empty = None
+        self._output_buffer_lock = threading.Lock() if self._use_threads else None
 
     def __repr__(self):
         return f'<{self.__class__.__name__}:{self._device}>'
@@ -47,6 +51,12 @@ class SerialStream:
             self._connection = None
 
     def write(self, data):
+        if self._use_threads:
+            with self._output_buffer_lock:
+                self._output_buffer += data
+                if self._output_buffer_empty is None:
+                    self._output_buffer_empty = self._loop.run_in_executor(None, self._write_blocking)
+            return
         if not self._output_buffer:
             try:
                 n = self._connection.write(data)
@@ -85,7 +95,22 @@ class SerialStream:
             self._output_buffer_empty.set_result(None)
             self._output_buffer_empty = None
 
+    def _write_blocking(self):
+        with self._output_buffer_lock:
+            while self._output_buffer:
+                data = bytes(self._output_buffer)
+                self._output_buffer_lock.release()
+                try:
+                    n = self._connection.write(data)
+                finally:
+                    self._output_buffer_lock.acquire()
+                LOG.debug(f"Write {self._output_buffer[:n]!r}")
+                self._output_buffer = self._output_buffer[n:]
+            self._output_buffer_empty = None
+
     async def read(self, n=None):
+        if self._use_threads:
+            return await self._loop.run_in_executor(None, self._read_blocking, n)
         while True:
             w = self._connection.in_waiting
             if w:
@@ -99,6 +124,14 @@ class SerialStream:
                     await future
                 finally:
                     self._loop.remove_reader(self._connection)
+
+    def _read_blocking(self, n=None):
+        data = self._connection.read(1)
+        w = self._connection.in_waiting
+        if w and (n is None or n > 1):
+            data += self._connection.read(w if n is None else min(n-1, w))
+        LOG.debug(f"Read {data!r}")
+        return data
 
     async def readexactly(self, n):
         data = b''

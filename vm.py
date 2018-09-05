@@ -20,14 +20,10 @@ from enum import IntEnum
 import logging
 import struct
 
+from utils import DotDict
+
 
 LOG = logging.getLogger(__name__)
-
-
-class DotDict(dict):
-    __getattr__ = dict.__getitem__
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
 
 
 class Register(namedtuple('Register', ['base', 'dtype', 'description'])):
@@ -258,7 +254,7 @@ class VirtualMachine:
                 await self._vm.issue(self._data)
             return False
 
-    def __init__(self, reader, writer):
+    def __init__(self, reader=None, writer=None):
         self._reader = reader
         self._writer = writer
         self._transactions = []

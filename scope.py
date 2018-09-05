@@ -13,6 +13,7 @@ import sys
 from urllib.parse import urlparse
 
 import streams
+from utils import DotDict
 import vm
 
 
@@ -30,26 +31,29 @@ class ConfigurationError(Exception):
 
 class Scope(vm.VirtualMachine):
 
-    AnalogParams = namedtuple('AnalogParams', ['la', 'lb', 'lc', 'ha', 'hb', 'hc', 'scale', 'offset', 'safe_low', 'safe_high', 'ab_offset'])
+    class AnalogParams(namedtuple('AnalogParams', ['la', 'lb', 'lc', 'ha', 'hb', 'hc', 'scale', 'offset', 'safe_low', 'safe_high', 'ab_offset'])):
+        def __repr__(self):
+            return (f"la={self.la:.3f} lb={self.lb:.3e} lc={self.lc:.3e} ha={self.ha:.3f} hb={self.hb:.3e} hc={self.hc:.3e} "
+                    f"scale={self.scale:.3f}V offset={self.offset:.3f}V safe_low={self.safe_low:.2f}V safe_high={self.safe_high:.2f}V "
+                    f"ab_offset={self.ab_offset*1000:.1f}mV")
 
-    @classmethod
-    async def connect(cls, url=None):
+    async def connect(self, url):
         if url is None:
             port = next(streams.SerialStream.ports_matching(vid=0x0403, pid=0x6001))
             url = f'file:{port.device}'
         LOG.info(f"Connecting to scope at {url}")
+        self.close()
         parts = urlparse(url, scheme='file')
         if parts.scheme == 'file':
-            reader = writer = streams.SerialStream(device=parts.path)
+            self._reader = self._writer = streams.SerialStream(device=parts.path)
         elif parts.scheme == 'socket':
             host, port = parts.netloc.split(':', 1)
-            reader, writer = await asyncio.open_connection(host, int(port))
+            self._reader, self._writer = await asyncio.open_connection(host, int(port))
         else:
             raise ValueError(f"Don't know what to do with url: {url}")
-        scope = cls(reader, writer)
-        scope.url = url
-        await scope.reset()
-        return scope
+        self.url = url
+        await self.reset()
+        return self
 
     async def reset(self):
         LOG.info("Resetting scope")
@@ -65,7 +69,7 @@ class Scope(vm.VirtualMachine):
             self.awg_minimum_clock = 33
             self.logic_low = 0
             self.awg_maximum_voltage = self.clock_voltage = self.logic_high = 3.3
-            self.analog_params = {'x1':  self.AnalogParams(1.1, -.05, 0, 1.1, -.05, -.05, 18.3, -7.50, -5.5, 8, 0)}
+            self.analog_params = {'x1':  self.AnalogParams(1.1, -.05, 0, 1.1, -.05, -.05, 18.333, -7.517, -5.5, 8, 0)}
             self.analog_lo_min = 0.07
             self.analog_hi_max = 0.88
             self.timeout_clock_period = (1<<8) * self.master_clock_period
@@ -84,7 +88,9 @@ class Scope(vm.VirtualMachine):
         for url in config.sections():
             if url == self.url:
                 for probes in config[url]:
-                    analog_params[probes] = self.AnalogParams(*map(float, config[url][probes].split()))
+                    params = self.AnalogParams(*map(float, config[url][probes].split()))
+                    analog_params[probes] = params
+                    LOG.debug(f"Loading saved parameters for {probes}: {params!r}")
         if analog_params:
             self.analog_params.update(analog_params)
             LOG.info(f"Loaded analog parameters for probes: {', '.join(analog_params.keys())}")
@@ -112,7 +118,7 @@ class Scope(vm.VirtualMachine):
 
     def calculate_lo_hi(self, low, high, params):
         if not isinstance(params, self.AnalogParams):
-            params = self.AnalogParams(*(list(params) + [None]*(11-len(params))))
+            params = self.AnalogParams(*list(params) + [None]*(11-len(params)))
         l = (low - params.offset) / params.scale
         h = (high - params.offset) / params.scale
         dl = params.la*l + params.lb*h + params.lc
@@ -234,19 +240,22 @@ class Scope(vm.VirtualMachine):
                     if channel.startswith('L'):
                         channel = int(channel[1:])
                     else:
-                        raise TypeError("Unrecognised trigger value")
+                        raise ValueError("Unrecognised trigger value")
                 if channel < 0 or channel > 7:
-                    raise TypeError("Unrecognised trigger value")
+                    raise ValueError("Unrecognised trigger value")
                 mask = 1<<channel
                 trigger_mask &= ~mask
                 if value:
                     trigger_logic |= mask
         else:
-            raise TypeError("Unrecognised trigger value")
-        if trigger_type.lower() in {'falling', 'below'}:
+            raise ValueError("Unrecognised trigger value")
+        trigger_type = trigger_type.lower()
+        if trigger_type in {'falling', 'below'}:
             spock_option |= vm.SpockOption.TriggerInvert
+        elif trigger_type not in {'rising', 'above'}:
+            raise ValueError("Unrecognised trigger_type")
         trigger_outro = 4 if hair_trigger else 8
-        trigger_intro = 0 if trigger_type.lower() in {'above', 'below'} else trigger_outro
+        trigger_intro = 0 if trigger_type in {'above', 'below'} else trigger_outro
         trigger_samples = min(max(0, int(nsamples*trigger_position)), nsamples)
         trace_outro = max(0, nsamples-trigger_samples-trigger_outro)
         trace_intro = max(0, trigger_samples-trigger_intro)
@@ -292,7 +301,7 @@ class Scope(vm.VirtualMachine):
         if capture_mode.analog_channels == 2:
             address -= address % 2
 
-        traces = vm.DotDict()
+        traces = DotDict()
         timestamps = array.array('d', (t*self.master_clock_period for t in range(start_timestamp, timestamp, ticks*clock_scale)))
         start_time = start_timestamp*self.master_clock_period
         for dump_channel, channel in enumerate(sorted(analog_channels)):
@@ -305,12 +314,11 @@ class Scope(vm.VirtualMachine):
                 await self.issue_analog_dump_binary()
             value_multiplier, value_offset = (1, 0) if raw else (high-low, low-analog_params.ab_offset/2*(1 if channel == 'A' else -1))
             data = await self.read_analog_samples(asamples, capture_mode.sample_width)
-            traces[channel] = vm.DotDict({'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
-                                          'samples': array.array('f', (value*value_multiplier+value_offset for value in data)),
-                                          'start_time': start_time+sample_period*dump_channel,
-                                          'sample_period': sample_period*len(analog_channels),
-                                          'sample_rate': sample_rate/len(analog_channels),
-                                          'cause': cause})
+            traces[channel] = DotDict({'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
+                                       'samples': array.array('f', (value*value_multiplier+value_offset for value in data)),
+                                       'sample_period': sample_period*len(analog_channels),
+                                       'sample_rate': sample_rate/len(analog_channels),
+                                       'cause': cause})
         if logic_channels:
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) % buffer_width,
@@ -320,12 +328,11 @@ class Scope(vm.VirtualMachine):
             data = await self.read_logic_samples(nsamples)
             for i in logic_channels:
                 mask = 1<<i
-                traces[f'L{i}'] = vm.DotDict({'timestamps': timestamps,
-                                              'samples': array.array('B', (1 if value & mask else 0 for value in data)),
-                                              'start_time': start_time,
-                                              'sample_period': sample_period,
-                                              'sample_rate': sample_rate,
-                                              'cause': cause})
+                traces[f'L{i}'] = DotDict({'timestamps': timestamps,
+                                           'samples': array.array('B', (1 if value & mask else 0 for value in data)),
+                                           'sample_period': sample_period,
+                                           'sample_rate': sample_rate,
+                                           'cause': cause})
         LOG.info(f"{nsamples} samples captured on {cause}, traces: {', '.join(traces)}")
         return traces
 
@@ -362,10 +369,10 @@ class Scope(vm.VirtualMachine):
                 mode = {'sine': 0, 'triangle': 1, 'exponential': 2, 'square': 3}[waveform.lower()]
                 await self.set_registers(Cmd=0, Mode=mode, Ratio=ratio)
                 await self.issue_synthesize_wavetable()
-            elif len(wavetable) == self.awg_wavetable_size:
-                wavetable = bytes(min(max(0, int(round(y*256))), 255) for y in wavetable)
+            elif len(waveform) == self.awg_wavetable_size:
+                waveform = bytes(min(max(0, int(round(y*256))), 255) for y in waveform)
                 await self.set_registers(Cmd=0, Mode=1, Address=0, Size=1)
-                await self.wavetable_write_bytes(wavetable)
+                await self.wavetable_write_bytes(waveform)
             else:
                 raise ValueError(f"waveform must be a valid name or a sequence of {self.awg_wavetable_size} samples [0,1)")
         async with self.transaction():
@@ -494,11 +501,7 @@ class Scope(vm.VirtualMachine):
             safe_low, safe_high = minimize(f, (low[0], high[0])).x
             offset_mean = offset.mean()
             params = self.analog_params[probes] = self.AnalogParams(*result.x, analog_scale, analog_offset, safe_low, safe_high, offset_mean)
-            LOG.info(f"Analog parameters: la={params.la:.3e} lb={params.lb:.3e} lc={params.lc:.3e} "
-                     f"ha={params.ha:.3e} hb={params.hb:.3e} hc={params.hc:.3e} "
-                     f"scale={params.scale:.3f}V offset={params.offset:.3f}V "
-                     f"safe_low={params.safe_low:.1f}V safe_high={params.safe_high:.1f}V "
-                     f"ab_offset={offset_mean*1000:.1f}mV (±{100*offset.std()/offset_mean:.1f}%)")
+            LOG.info(f"{params!r} ±{100*offset.std()/offset_mean:.1f}%)")
             clo, chi = self.calculate_lo_hi(low, high, params)
             lo_error = np.sqrt((((clo-lo)/(hi-lo))**2).mean())
             hi_error = np.sqrt((((chi-hi)/(hi-lo))**2).mean())
@@ -508,6 +511,9 @@ class Scope(vm.VirtualMachine):
         else:
             LOG.warning(f"Calibration failed: {result.message}")
         return result.success
+
+    def __repr__(self):
+        return f"<Scope {self.url}>"
 
 
 """
@@ -536,7 +542,7 @@ async def main():
     parser.add_argument('--verbose', action='store_true', default=False, help="Verbose logging")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else (logging.INFO if args.verbose else logging.WARNING), stream=sys.stdout)
-    s = await Scope.connect(args.url)
+    s = await Scope().connect(args.url)
 
 def await_(g):
     task = asyncio.Task(g)
