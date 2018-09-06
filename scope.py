@@ -37,10 +37,13 @@ class Scope(vm.VirtualMachine):
                     f"scale={self.scale:.3f}V offset={self.offset:.3f}V safe_low={self.safe_low:.2f}V safe_high={self.safe_high:.2f}V "
                     f"ab_offset={self.ab_offset*1000:.1f}mV")
 
-    async def connect(self, url):
+    async def connect(self, url=None):
         if url is None:
-            port = next(streams.SerialStream.ports_matching(vid=0x0403, pid=0x6001))
-            url = f'file:{port.device}'
+            for port in streams.SerialStream.ports_matching(vid=0x0403, pid=0x6001):
+                url = f'file:{port.device}'
+                break
+            else:
+                raise RuntimeError("No matching serial device found")
         LOG.info(f"Connecting to scope at {url}")
         self.close()
         parts = urlparse(url, scheme='file')
