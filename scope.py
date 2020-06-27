@@ -39,8 +39,8 @@ class Scope(vm.VirtualMachine):
 
     async def connect(self, url=None):
         if url is None:
-            for port in streams.SerialStream.ports_matching(vid=0x0403, pid=0x6001):
-                url = f'file:{port.device}'
+            for device in streams.SerialStream.devices_matching(vid=0x0403, pid=0x6001):
+                url = f'file:{device}'
                 break
             else:
                 raise RuntimeError("No matching serial device found")

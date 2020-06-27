@@ -20,22 +20,22 @@ LOG = logging.getLogger(__name__)
 class SerialStream:
 
     @classmethod
-    def ports_matching(cls, vid=None, pid=None, serial=None):
+    def devices_matching(cls, vid=None, pid=None, serial=None):
         for port in comports():
             if (vid is None or vid == port.vid) and (pid is None or pid == port.pid) and (serial is None or serial == port.serial_number):
-                yield port
+                yield port.device
 
     @classmethod
     def stream_matching(cls, vid=None, pid=None, serial=None, **kwargs):
-        for port in cls.devices_matching(vid, pid, serial):
-            return SerialStream(port.device, **kwargs)
+        for device in cls.devices_matching(vid, pid, serial):
+            return SerialStream(device, **kwargs)
         raise RuntimeError("No matching serial device")
 
     def __init__(self, device, use_threads=None, loop=None, **kwargs):
         self._device = device
         self._use_threads = sys.platform == 'win32' if use_threads is None else use_threads
         self._connection = serial.Serial(self._device, **kwargs) if self._use_threads else \
-                           serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
+            serial.Serial(self._device, timeout=0, write_timeout=0, **kwargs)
         LOG.debug(f"Opened SerialStream on {device}")
         self._loop = loop if loop is not None else asyncio.get_event_loop()
         self._output_buffer = bytes()
@@ -138,4 +138,3 @@ class SerialStream:
         while len(data) < n:
             data += await self.read(n-len(data))
         return data
-
