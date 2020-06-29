@@ -124,34 +124,45 @@ def analyze_series(series):
         waveform.offset = underlying.mean() + offset
         possibles = characterize_waveform(wave, crossings)
         if possibles:
-            waveform.error, waveform.shape, waveform.duty_cycle = possibles[0]
+            error, shape, duty_cycle = possibles[0]
+            waveform.error = error
+            waveform.shape = shape
+            if duty_cycle is not None:
+                waveform.duty_cycle = duty_cycle
+        else:
+            waveform.shape = 'unknown'
         series.waveform = waveform
 
 
 # %%
 
-from pylab import plot
+from pylab import figure, plot, show
 from utils import DotDict
 
 o = 400
 m = 5
 n = o * m
-samples = sine_wave(o)
-samples = np.hstack([samples] * m) * 2 + 5
+samples = square_wave(o)
+samples = np.hstack([samples] * m) * 2
 samples = np.hstack([samples[100:], samples[:100]])
 samples += np.random.normal(size=n) * 0.1
-samples += np.linspace(-0.5, 0.5, n)
+samples += np.linspace(4.5, 5.5, n)
 series = DotDict(samples=samples, sample_rate=1000000)
 
 analyze_series(series)
 
-print(series.waveform.frequency)
-print(series.waveform.shape)
-print(series.waveform.amplitude, series.waveform.offset)
+if 'waveform' in series:
+    waveform = series.waveform
+    if 'duty_cycle' in waveform:
+        print(f"Found {waveform.frequency:.0f}Hz {waveform.shape} wave, "
+              f"with duty cycle {waveform.duty_cycle * 100:.0f}%, "
+              f"amplitude ±{waveform.amplitude:.1f}V and offset {waveform.offset:.1f}V")
+    else:
+        print(f"Found {waveform.frequency:.0f}Hz {waveform.shape} wave, "
+              f"with amplitude ±{waveform.amplitude:.1f}V and offset {waveform.offset:.1f}V")
 
-plot(series.samples)
-
-wave = np.hstack([series.waveform.samples[-series.waveform.beginning:]]
-                 + [series.waveform.samples] * series.waveform.count
-                 + [series.waveform.samples[:-series.waveform.beginning]])
-plot(wave * series.waveform.amplitude + series.waveform.offset)
+    figure(1)
+    plot(series.samples)
+    wave = np.hstack([waveform.samples[-waveform.beginning:]] + [waveform.samples] * waveform.count + [waveform.samples[:-waveform.beginning]])
+    plot(wave * waveform.amplitude + waveform.offset)
+    show()
