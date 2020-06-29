@@ -16,9 +16,8 @@ from utils import DotDict
 import vm
 
 
-LOG = logging.getLogger(__name__)
-
-ANALOG_PARAMETERS_PATH = Path('~/.config/scopething/analog.conf').expanduser()
+Log = logging.getLogger(__name__)
+AnalogParametersPath = Path('~/.config/scopething/analog.conf').expanduser()
 
 
 class UsageError(Exception):
@@ -44,7 +43,7 @@ class Scope(vm.VirtualMachine):
                 break
             else:
                 raise RuntimeError("No matching serial device found")
-        LOG.info(f"Connecting to scope at {url}")
+        Log.info(f"Connecting to scope at {url}")
         self.close()
         parts = urlparse(url, scheme='file')
         if parts.scheme == 'file':
@@ -59,7 +58,7 @@ class Scope(vm.VirtualMachine):
         return self
 
     async def reset(self):
-        LOG.info("Resetting scope")
+        Log.info("Resetting scope")
         await self.issue_reset()
         await self.issue_get_revision()
         revision = ((await self.read_replies(2))[1]).decode('ascii')
@@ -82,31 +81,31 @@ class Scope(vm.VirtualMachine):
         self._awg_running = False
         self._clock_running = False
         self.load_analog_params()
-        LOG.info(f"Initialised scope, revision: {revision}")
+        Log.info(f"Initialised scope, revision: {revision}")
 
     def load_analog_params(self):
         config = ConfigParser()
-        config.read(ANALOG_PARAMETERS_PATH)
+        config.read(AnalogParametersPath)
         analog_params = {}
         for url in config.sections():
             if url == self.url:
                 for probes in config[url]:
                     params = self.AnalogParams(*map(float, config[url][probes].split()))
                     analog_params[probes] = params
-                    LOG.debug(f"Loading saved parameters for {probes}: {params!r}")
+                    Log.debug(f"Loading saved parameters for {probes}: {params!r}")
         if analog_params:
             self.analog_params.update(analog_params)
-            LOG.info(f"Loaded analog parameters for probes: {', '.join(analog_params.keys())}")
+            Log.info(f"Loaded analog parameters for probes: {', '.join(analog_params.keys())}")
 
     def save_analog_params(self):
-        LOG.info("Saving analog parameters")
+        Log.info("Saving analog parameters")
         config = ConfigParser()
-        config.read(ANALOG_PARAMETERS_PATH)
+        config.read(AnalogParametersPath)
         config[self.url] = {probes: ' '.join(map(str, self.analog_params[probes])) for probes in self.analog_params}
-        parent = ANALOG_PARAMETERS_PATH.parent
+        parent = AnalogParametersPath.parent
         if not parent.is_dir():
             parent.mkdir(parents=True)
-        with open(ANALOG_PARAMETERS_PATH, 'w') as parameters_file:
+        with open(AnalogParametersPath, 'w') as parameters_file:
             config.write(parameters_file)
 
     def __enter__(self):
@@ -117,7 +116,7 @@ class Scope(vm.VirtualMachine):
 
     def close(self):
         super().close()
-        LOG.info("Closed scope")
+        Log.info("Closed scope")
 
     def calculate_lo_hi(self, low, high, params):
         if not isinstance(params, self.AnalogParams):
@@ -164,20 +163,20 @@ class Scope(vm.VirtualMachine):
             ticks = int(round(period / self.master_clock_period / nsamples))
             clock_scale = 1
             if capture_mode.analog_channels == len(analog_channels) and capture_mode.logic_channels == bool(logic_channels):
-                LOG.debug(f"Considering trace mode {capture_mode.trace_mode.name}...")
+                Log.debug(f"Considering trace mode {capture_mode.trace_mode.name}...")
                 if ticks > capture_mode.clock_high and capture_mode.clock_divide > 1:
                     clock_scale = int(math.ceil(period / self.master_clock_period / nsamples / capture_mode.clock_high))
                     ticks = int(round(period / self.master_clock_period / nsamples / clock_scale))
                     if ticks in range(capture_mode.clock_low, capture_mode.clock_high+1):
-                        LOG.debug(f"- try with tick count {ticks} x {clock_scale}")
+                        Log.debug(f"- try with tick count {ticks} x {clock_scale}")
                     else:
                         continue
                 elif ticks >= capture_mode.clock_low:
                     if ticks > capture_mode.clock_high:
                         ticks = capture_mode.clock_high
-                    LOG.debug(f"- try with tick count {ticks}")
+                    Log.debug(f"- try with tick count {ticks}")
                 else:
-                    LOG.debug("- mode too slow")
+                    Log.debug("- mode too slow")
                     continue
                 n = int(round(period / self.master_clock_period / ticks / clock_scale))
                 if len(analog_channels) == 2:
@@ -186,16 +185,16 @@ class Scope(vm.VirtualMachine):
                 if logic_channels and analog_channels:
                     buffer_width //= 2
                 if n <= buffer_width:
-                    LOG.debug(f"- OK; period is {n} samples")
+                    Log.debug(f"- OK; period is {n} samples")
                     nsamples = n
                     break
-                LOG.debug(f"- insufficient buffer space for necessary {n} samples")
+                Log.debug(f"- insufficient buffer space for necessary {n} samples")
         else:
             raise ConfigurationError("Unable to find appropriate capture mode")
         sample_period = ticks*clock_scale*self.master_clock_period
         sample_rate = 1/sample_period
         if trigger_position and sample_rate > 5e6:
-            LOG.warn("Pre-trigger capture not supported above 5M samples/s; forcing trigger_position=0")
+            Log.warn("Pre-trigger capture not supported above 5M samples/s; forcing trigger_position=0")
             trigger_position = 0
 
         if raw:
@@ -206,11 +205,11 @@ class Scope(vm.VirtualMachine):
             if low is None:
                 low = analog_params.safe_low if analog_channels else self.logic_low
             elif low < analog_params.safe_low:
-                LOG.warning(f"Voltage range is below safe minimum: {low} < {analog_params.safe_low}")
+                Log.warning(f"Voltage range is below safe minimum: {low} < {analog_params.safe_low}")
             if high is None:
                 high = analog_params.safe_high if analog_channels else self.logic_high
             elif high > analog_params.safe_high:
-                LOG.warning(f"Voltage range is above safe maximum: {high} > {analog_params.safe_high}")
+                Log.warning(f"Voltage range is above safe maximum: {high} > {analog_params.safe_high}")
             lo, hi = self.calculate_lo_hi(low, high, analog_params)
 
         spock_option = vm.SpockOption.TriggerTypeHardwareComparator
@@ -225,8 +224,7 @@ class Scope(vm.VirtualMachine):
             kitchen_sink_b |= vm.KitchenSinkB.AnalogFilterEnable
         if trigger_level is None:
             trigger_level = (high + low) / 2
-        if not raw:
-            trigger_level = (trigger_level - analog_params.offset) / analog_params.scale
+        analog_trigger_level = (trigger_level - analog_params.offset) / analog_params.scale if not raw else trigger_level
         if trigger == 'A' or trigger == 'B':
             if trigger == 'A':
                 spock_option |= vm.SpockOption.TriggerSourceA
@@ -273,12 +271,12 @@ class Scope(vm.VirtualMachine):
                 else:
                     raise ConfigurationError("Required trigger timeout too long, use a later trigger position")
 
-        LOG.info(f"Begin {('mixed' if logic_channels else 'analogue') if analog_channels else 'logic'} signal capture "
+        Log.info(f"Begin {('mixed' if logic_channels else 'analogue') if analog_channels else 'logic'} signal capture "
                  f"at {sample_rate:,.0f} samples per second (trace mode {capture_mode.trace_mode.name})")
         async with self.transaction():
             await self.set_registers(TraceMode=capture_mode.trace_mode, BufferMode=capture_mode.buffer_mode,
                                      SampleAddress=0, ClockTicks=ticks, ClockScale=clock_scale,
-                                     TriggerLevel=trigger_level, TriggerLogic=trigger_logic, TriggerMask=trigger_mask,
+                                     TriggerLevel=analog_trigger_level, TriggerLogic=trigger_logic, TriggerMask=trigger_mask,
                                      TraceIntro=trace_intro, TraceOutro=trace_outro, TraceDelay=0, Timeout=trigger_timeout,
                                      TriggerIntro=trigger_intro//2, TriggerOutro=trigger_outro//2, Prelude=0,
                                      SpockOption=spock_option, ConverterLo=lo, ConverterHi=hi,
@@ -304,7 +302,7 @@ class Scope(vm.VirtualMachine):
             address -= address % 2
 
         traces = DotDict()
-        timestamps = array.array('d', (t*self.master_clock_period for t in range(start_timestamp, timestamp, ticks*clock_scale)))
+        timestamps = array.array('d', (t*self.master_clock_period for t in range(0, timestamp, ticks*clock_scale)))
         for dump_channel, channel in enumerate(sorted(analog_channels)):
             asamples = nsamples // len(analog_channels)
             async with self.transaction():
@@ -315,11 +313,18 @@ class Scope(vm.VirtualMachine):
                 await self.issue_analog_dump_binary()
             value_multiplier, value_offset = (1, 0) if raw else (high-low, low-analog_params.ab_offset/2*(1 if channel == 'A' else -1))
             data = await self.read_analog_samples(asamples, capture_mode.sample_width)
-            traces[channel] = DotDict({'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
-                                       'samples': array.array('f', (value*value_multiplier+value_offset for value in data)),
-                                       'sample_period': sample_period*len(analog_channels),
-                                       'sample_rate': sample_rate/len(analog_channels),
-                                       'cause': cause})
+            series = DotDict({'channel': channel,
+                              'start_timestamp': start_timestamp,
+                              'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
+                              'samples': array.array('f', (value*value_multiplier+value_offset for value in data)),
+                              'sample_period': sample_period*len(analog_channels),
+                              'sample_rate': sample_rate/len(analog_channels),
+                              'cause': cause})
+            if cause == 'trigger' and channel == trigger:
+                series.trigger_timestamp = series.timestamps[trigger_samples // len(analog_channels)]
+                series.trigger_level = trigger_level
+                series.trigger_type = trigger_type
+            traces[channel] = series
         if logic_channels:
             async with self.transaction():
                 await self.set_registers(SampleAddress=(address - nsamples) % buffer_width,
@@ -329,12 +334,20 @@ class Scope(vm.VirtualMachine):
             data = await self.read_logic_samples(nsamples)
             for i in logic_channels:
                 mask = 1 << i
-                traces[f'L{i}'] = DotDict({'timestamps': timestamps,
-                                           'samples': array.array('B', (1 if value & mask else 0 for value in data)),
-                                           'sample_period': sample_period,
-                                           'sample_rate': sample_rate,
-                                           'cause': cause})
-        LOG.info(f"{nsamples} samples captured on {cause}, traces: {', '.join(traces)}")
+                channel = f'L{i}'
+                series = DotDict({'channel': channel,
+                                  'start_timestamp': start_timestamp,
+                                  'timestamps': timestamps,
+                                  'samples': array.array('B', (1 if value & mask else 0 for value in data)),
+                                  'sample_period': sample_period,
+                                  'sample_rate': sample_rate,
+                                  'cause': cause})
+                if cause == 'trigger' and isinstance(trigger, dict) and i in trigger:
+                    series.trigger_timestamp = series.timestamps[trigger_samples]
+                    series.trigger_level = trigger[i]
+                    series.trigger_type = trigger_type
+            traces[channel] = series
+        Log.info(f"{nsamples} samples captured on {cause}, traces: {', '.join(traces)}")
         return traces
 
     async def start_waveform(self, frequency, waveform='sine', ratio=0.5, low=0, high=None, min_samples=50, max_error=1e-4):
@@ -355,7 +368,7 @@ class Scope(vm.VirtualMachine):
             size = int(round(nwaves * width))
             actualf = self.master_clock_rate * nwaves / size / clock
             if actualf == frequency:
-                LOG.debug(f"Exact solution: size={size} nwaves={nwaves} clock={clock}")
+                Log.debug(f"Exact solution: size={size} nwaves={nwaves} clock={clock}")
                 break
             error = abs(frequency - actualf) / frequency
             if error < max_error and (best_solution is None or error < best_solution[0]):
@@ -364,7 +377,7 @@ class Scope(vm.VirtualMachine):
             if best_solution is None:
                 raise ConfigurationError("No solution to required frequency/min_samples/max_error")
             error, size, nwaves, clock, actualf = best_solution
-            LOG.debug(f"Best solution: size={size} nwaves={nwaves} clock={clock} actualf={actualf}")
+            Log.debug(f"Best solution: size={size} nwaves={nwaves} clock={clock} actualf={actualf}")
         async with self.transaction():
             if isinstance(waveform, str):
                 mode = {'sine': 0, 'triangle': 1, 'exponential': 2, 'square': 3}[waveform.lower()]
@@ -391,7 +404,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(KitchenSinkB=vm.KitchenSinkB.WaveformGeneratorEnable)
             await self.issue_configure_device_hardware()
         self._awg_running = True
-        LOG.info(f"Signal generator running at {actualf:0.1f}Hz")
+        Log.info(f"Signal generator running at {actualf:0.1f}Hz")
         return actualf
 
     async def stop_waveform(self):
@@ -402,7 +415,7 @@ class Scope(vm.VirtualMachine):
             await self.issue_control_clock_generator()
             await self.set_registers(KitchenSinkB=0)
             await self.issue_configure_device_hardware()
-        LOG.info("Signal generator stopped")
+        Log.info("Signal generator stopped")
         self._awg_running = False
 
     async def start_clock(self, frequency, ratio=0.5, max_error=1e-4):
@@ -417,7 +430,7 @@ class Scope(vm.VirtualMachine):
             await self.set_registers(Map5=0x12, Clock=ticks, Rise=0, Fall=fall, Control=0x80, Cmd=3, Mode=0)
             await self.issue_control_clock_generator()
         self._clock_running = True
-        LOG.info(f"Clock generator running at {actualf:0.1f}Hz, {actualr*100:.0f}% duty cycle")
+        Log.info(f"Clock generator running at {actualf:0.1f}Hz, {actualr*100:.0f}% duty cycle")
         return actualf, actualr
 
     async def stop_clock(self):
@@ -426,7 +439,7 @@ class Scope(vm.VirtualMachine):
         async with self.transaction():
             await self.set_registers(Map5=0, Cmd=1, Mode=0)
             await self.issue_control_clock_generator()
-        LOG.info("Clock generator stopped")
+        Log.info("Clock generator stopped")
         self._clock_running = False
 
     async def calibrate(self, probes='x1', n=32, save=True):
@@ -477,7 +490,7 @@ class Scope(vm.VirtualMachine):
         full = (full + 1) / 3
         analog_scale = self.clock_voltage / (full - zero)
         analog_offset = -zero * analog_scale
-        LOG.info(f"Analog full range = {analog_scale:.2f}V, zero offset = {analog_offset:.2f}V")
+        Log.info(f"Analog full range = {analog_scale:.2f}V, zero offset = {analog_offset:.2f}V")
         for lo in np.linspace(self.analog_lo_min, 0.5, n, endpoint=False):
             for hi in np.linspace(self.analog_hi_max, 0.5, n):
                 zero, full, offset = await measure(lo, hi, 2e-3 if len(items) % 4 < 2 else 1e-3, len(items) % 2 == 0)
@@ -497,7 +510,7 @@ class Scope(vm.VirtualMachine):
                           constraints=[{'type': 'eq', 'fun': lambda x: x[0]*1/3 + x[1]*2/3 + x[2] - 1/3},
                                        {'type': 'eq', 'fun': lambda x: x[3]*2/3 + x[4]*1/3 + x[5] - 2/3}])
         if result.success:
-            LOG.info(f"Calibration succeeded: {result.message}")
+            Log.info(f"Calibration succeeded: {result.message}")
             params = self.AnalogParams(*result.x, analog_scale, analog_offset, None, None, None)
 
             def f(x):
@@ -507,15 +520,15 @@ class Scope(vm.VirtualMachine):
             safe_low, safe_high = minimize(f, (low[0], high[0])).x
             offset_mean = offset.mean()
             params = self.analog_params[probes] = self.AnalogParams(*result.x, analog_scale, analog_offset, safe_low, safe_high, offset_mean)
-            LOG.info(f"{params!r} ±{100*offset.std()/offset_mean:.1f}%)")
+            Log.info(f"{params!r} ±{100*offset.std()/offset_mean:.1f}%)")
             clo, chi = self.calculate_lo_hi(low, high, params)
             lo_error = np.sqrt((((clo-lo)/(hi-lo))**2).mean())
             hi_error = np.sqrt((((chi-hi)/(hi-lo))**2).mean())
-            LOG.info(f"Mean error: lo={lo_error*10000:.1f}bps hi={hi_error*10000:.1f}bps")
+            Log.info(f"Mean error: lo={lo_error*10000:.1f}bps hi={hi_error*10000:.1f}bps")
             if save:
                 self.save_analog_params()
         else:
-            LOG.warning(f"Calibration failed: {result.message}")
+            Log.warning(f"Calibration failed: {result.message}")
         return result.success
 
     def __repr__(self):
