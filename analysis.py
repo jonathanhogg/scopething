@@ -1,6 +1,8 @@
 
 import numpy as np
 
+from utils import DotDict
+
 
 def interpolate_min_x(f, x):
     return 0.5 * (f[x-1] - f[x+1]) / (f[x-1] - 2 * f[x] + f[x+1]) + x
@@ -39,7 +41,7 @@ def moving_average(samples, width, mode='wrap'):
 
 
 def calculate_periodicity(series, window=0.1):
-    samples = np.array(series.samples)
+    samples = np.array(series.samples, dtype='double')
     window = int(len(samples) * window)
     errors = np.zeros(len(samples) - window)
     for i in range(1, len(errors) + 1):
@@ -93,7 +95,7 @@ def normalize_waveform(samples, smooth=7):
     if first_falling is not None:
         crossings.append((n + first_falling - last_rising, last_rising))
     width, first = min(crossings)
-    wave = np.hstack([smoothed[first:], smoothed[:first]]) / scale
+    wave = (np.hstack([samples[first:], samples[:first]]) - offset) / scale
     return wave, offset, scale, first, sorted((i - first % n, w) for (w, i) in crossings)
 
 
@@ -111,7 +113,7 @@ def characterize_waveform(samples, crossings):
     return possibles
 
 
-def analyze_series(series):
+def annotate_series(series):
     period = calculate_periodicity(series)
     if period is not None:
         waveform = DotDict(period=period, frequency=1 / period)
@@ -122,6 +124,10 @@ def analyze_series(series):
         waveform.count = count
         waveform.amplitude = scale
         waveform.offset = underlying.mean() + offset
+        waveform.timestamps = np.arange(len(wave)) * series.sample_period
+        waveform.sample_period = series.sample_period
+        waveform.sample_rate = series.sample_rate
+        waveform.capture_start = series.capture_start + waveform.beginning * series.sample_period
         possibles = characterize_waveform(wave, crossings)
         if possibles:
             error, shape, duty_cycle = possibles[0]
@@ -132,37 +138,5 @@ def analyze_series(series):
         else:
             waveform.shape = 'unknown'
         series.waveform = waveform
-
-
-# %%
-
-from pylab import figure, plot, show
-from utils import DotDict
-
-o = 400
-m = 5
-n = o * m
-samples = square_wave(o)
-samples = np.hstack([samples] * m) * 2
-samples = np.hstack([samples[100:], samples[:100]])
-samples += np.random.normal(size=n) * 0.1
-samples += np.linspace(4.5, 5.5, n)
-series = DotDict(samples=samples, sample_rate=1000000)
-
-analyze_series(series)
-
-if 'waveform' in series:
-    waveform = series.waveform
-    if 'duty_cycle' in waveform:
-        print(f"Found {waveform.frequency:.0f}Hz {waveform.shape} wave, "
-              f"with duty cycle {waveform.duty_cycle * 100:.0f}%, "
-              f"amplitude ±{waveform.amplitude:.1f}V and offset {waveform.offset:.1f}V")
-    else:
-        print(f"Found {waveform.frequency:.0f}Hz {waveform.shape} wave, "
-              f"with amplitude ±{waveform.amplitude:.1f}V and offset {waveform.offset:.1f}V")
-
-    figure(1)
-    plot(series.samples)
-    wave = np.hstack([waveform.samples[-waveform.beginning:]] + [waveform.samples] * waveform.count + [waveform.samples[:-waveform.beginning]])
-    plot(wave * waveform.amplitude + waveform.offset)
-    show()
+        return True
+    return False
