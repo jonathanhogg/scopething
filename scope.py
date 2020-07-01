@@ -302,7 +302,8 @@ class Scope(vm.VirtualMachine):
             address -= address % 2
 
         traces = DotDict()
-        timestamps = array.array('d', (t*self.master_clock_period for t in range(0, timestamp, ticks*clock_scale)))
+
+        timestamps = array.array('d', (i * sample_period for i in range(nsamples)))
         for dump_channel, channel in enumerate(sorted(analog_channels)):
             asamples = nsamples // len(analog_channels)
             async with self.transaction():
@@ -314,7 +315,7 @@ class Scope(vm.VirtualMachine):
             value_multiplier, value_offset = (1, 0) if raw else (high-low, low-analog_params.ab_offset/2*(1 if channel == 'A' else -1))
             data = await self.read_analog_samples(asamples, capture_mode.sample_width)
             series = DotDict({'channel': channel,
-                              'start_timestamp': start_timestamp,
+                              'capture_start': start_timestamp * self.master_clock_period,
                               'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
                               'samples': array.array('f', (value*value_multiplier+value_offset for value in data)),
                               'sample_period': sample_period*len(analog_channels),
@@ -336,7 +337,7 @@ class Scope(vm.VirtualMachine):
                 mask = 1 << i
                 channel = f'L{i}'
                 series = DotDict({'channel': channel,
-                                  'start_timestamp': start_timestamp,
+                                  'capture_start': start_timestamp * self.master_clock_period,
                                   'timestamps': timestamps,
                                   'samples': array.array('B', (1 if value & mask else 0 for value in data)),
                                   'sample_period': sample_period,
