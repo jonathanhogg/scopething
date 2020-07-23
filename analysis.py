@@ -1,3 +1,11 @@
+"""
+analysis
+========
+
+Library code for analysing captures returned by `Scope.capture()`.
+"""
+
+# pylama:ignore=C0103,R1716
 
 import numpy as np
 
@@ -62,7 +70,7 @@ def extract_waveform(series, period):
     p = int(round(series.sample_rate * period))
     n = len(series.samples) // p
     if n <= 2:
-        return None, None
+        return None, None, None, None
     samples = np.array(series.samples)[:p*n]
     cumsum = samples.cumsum()
     underlying = (cumsum[p:] - cumsum[:-p]) / p
@@ -94,7 +102,7 @@ def normalize_waveform(samples, smooth=7):
                 crossings.append((i - last_rising, last_rising))
     if first_falling is not None:
         crossings.append((n + first_falling - last_rising, last_rising))
-    width, first = min(crossings)
+    first = min(crossings)[1]
     wave = (np.hstack([samples[first:], samples[:first]]) - offset) / scale
     return wave, offset, scale, first, sorted((i - first % n, w) for (w, i) in crossings)
 
@@ -104,7 +112,7 @@ def characterize_waveform(samples, crossings):
     possibles = []
     if len(crossings) == 1:
         duty_cycle = crossings[0][1] / n
-        if duty_cycle > 0.45 and duty_cycle < 0.55:
+        if 0.45 < duty_cycle < 0.55:
             possibles.append((rms(samples - sine_wave(n)), 'sine', None))
             possibles.append((rms(samples - triangle_wave(n)), 'triangle', None))
             possibles.append((rms(samples - sawtooth_wave(n)), 'sawtooth', None))

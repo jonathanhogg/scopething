@@ -1,4 +1,13 @@
-#!/usr/bin/env python3
+"""
+scope
+=====
+
+Code for talking to the BitScope series of USB digital mixed-signal scopes.
+Only supports the BS000501 at the moment, but that's only because it's never
+been tested on any other model.
+"""
+
+# pylama:ignore=E0611,E1101,W0201,W1203,W0631,C0103,R0902,R0912,R0913,R0914,R0915,C0415,W0601,W0102
 
 import argparse
 import array
@@ -178,23 +187,23 @@ class Scope(vm.VirtualMachine):
                 else:
                     Log.debug("- mode too slow")
                     continue
-                n = int(round(period / self.master_clock_period / ticks / clock_scale))
+                actual_nsamples = int(round(period / self.master_clock_period / ticks / clock_scale))
                 if len(analog_channels) == 2:
-                    n -= n % 2
+                    actual_nsamples -= actual_nsamples % 2
                 buffer_width = self.capture_buffer_size // capture_mode.sample_width
                 if logic_channels and analog_channels:
                     buffer_width //= 2
-                if n <= buffer_width:
-                    Log.debug(f"- OK; period is {n} samples")
-                    nsamples = n
+                if actual_nsamples <= buffer_width:
+                    Log.debug(f"- OK; period is {actual_nsamples} samples")
+                    nsamples = actual_nsamples
                     break
-                Log.debug(f"- insufficient buffer space for necessary {n} samples")
+                Log.debug(f"- insufficient buffer space for necessary {actual_nsamples} samples")
         else:
             raise ConfigurationError("Unable to find appropriate capture mode")
         sample_period = ticks*clock_scale*self.master_clock_period
         sample_rate = 1/sample_period
         if trigger_position and sample_rate > 5e6:
-            Log.warn("Pre-trigger capture not supported above 5M samples/s; forcing trigger_position=0")
+            Log.warning("Pre-trigger capture not supported above 5M samples/s; forcing trigger_position=0")
             trigger_position = 0
 
         if raw:
@@ -225,7 +234,7 @@ class Scope(vm.VirtualMachine):
         if trigger_level is None:
             trigger_level = (high + low) / 2
         analog_trigger_level = (trigger_level - analog_params.offset) / analog_params.scale if not raw else trigger_level
-        if trigger == 'A' or trigger == 'B':
+        if trigger in {'A', 'B'}:
             if trigger == 'A':
                 spock_option |= vm.SpockOption.TriggerSourceA
                 trigger_logic = 0x80
@@ -239,7 +248,7 @@ class Scope(vm.VirtualMachine):
             for channel, value in trigger.items():
                 if isinstance(channel, str):
                     if channel.startswith('L'):
-                        channel = int(channel[1:])
+                        channel = int(channel[1:])  # noqa
                     else:
                         raise ValueError("Unrecognised trigger value")
                 if channel < 0 or channel > 7:
@@ -268,8 +277,7 @@ class Scope(vm.VirtualMachine):
             if trigger_timeout > vm.Registers.Timeout.maximum_value:
                 if timeout > 0:
                     raise ConfigurationError("Required trigger timeout too long")
-                else:
-                    raise ConfigurationError("Required trigger timeout too long, use a later trigger position")
+                raise ConfigurationError("Required trigger timeout too long, use a later trigger position")
 
         Log.info(f"Begin {('mixed' if logic_channels else 'analogue') if analog_channels else 'logic'} signal capture "
                  f"at {sample_rate:,.0f} samples per second (trace mode {capture_mode.trace_mode.name})")
@@ -372,7 +380,7 @@ class Scope(vm.VirtualMachine):
                 Log.debug(f"Exact solution: size={size} nwaves={nwaves} clock={clock}")
                 break
             error = abs(frequency - actualf) / frequency
-            if error < max_error and (best_solution is None or error < best_solution[0]):
+            if error < max_error and (best_solution is None or error < best_solution[0]):  # noqa
                 best_solution = error, size, nwaves, clock, actualf
         else:
             if best_solution is None:
@@ -495,11 +503,11 @@ class Scope(vm.VirtualMachine):
         for lo in np.linspace(self.analog_lo_min, 0.5, n, endpoint=False):
             for hi in np.linspace(self.analog_hi_max, 0.5, n):
                 zero, full, offset = await measure(lo, hi, 2e-3 if len(items) % 4 < 2 else 1e-3, len(items) % 2 == 0)
-                if zero > 0.01 and full < 0.99 and full > zero:
+                if 0.01 < zero < full < 0.99:
                     analog_range = self.clock_voltage / (full - zero)
                     items.append((lo, hi, -zero*analog_range, (1-zero)*analog_range, offset*analog_range))
         await self.stop_clock()
-        lo, hi, low, high, offset = np.array(items).T
+        lo, hi, low, high, offset = np.array(items).T  # noqa
 
         def f(params):
             dl, dh = self.calculate_lo_hi(low, high, self.AnalogParams(*params, analog_scale, analog_offset, None, None, None))
@@ -514,7 +522,7 @@ class Scope(vm.VirtualMachine):
             Log.info(f"Calibration succeeded: {result.message}")
             params = self.AnalogParams(*result.x, analog_scale, analog_offset, None, None, None)
 
-            def f(x):
+            def f(x):  # noqa
                 lo, hi = self.calculate_lo_hi(x[0], x[1], params)
                 return np.sqrt((self.analog_lo_min - lo)**2 + (self.analog_hi_max - hi)**2)
 
@@ -536,23 +544,21 @@ class Scope(vm.VirtualMachine):
         return f"<Scope {self.url}>"
 
 
-"""
-$ ipython3 --pylab
-Using matplotlib backend: MacOSX
-
-In [1]: run scope
-
-In [2]: start_waveform(2000, 'triangle')
-Out[2]: 2000.0
-
-In [3]: traces = capture(['A','B'], period=1e-3, low=0, high=3.3)
-
-In [4]: plot(traces.A.timestamps, traces.A.samples)
-Out[4]: [<matplotlib.lines.Line2D at 0x10c782160>]
-
-In [5]: plot(traces.B.timestamps, traces.B.samples)
-Out[5]: [<matplotlib.lines.Line2D at 0x10e6ea320>]
-"""
+# $ ipython3 --pylab
+# Using matplotlib backend: MacOSX
+#
+# In [1]: run scope
+#
+# In [2]: start_waveform(2000, 'triangle')
+# Out[2]: 2000.0
+#
+# In [3]: traces = capture(['A','B'], period=1e-3, low=0, high=3.3)
+#
+# In [4]: plot(traces.A.timestamps, traces.A.samples)
+# Out[4]: [<matplotlib.lines.Line2D at 0x10c782160>]
+#
+# In [5]: plot(traces.B.timestamps, traces.B.samples)
+# Out[5]: [<matplotlib.lines.Line2D at 0x10e6ea320>]
 
 
 async def main():

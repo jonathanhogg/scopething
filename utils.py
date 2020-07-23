@@ -1,3 +1,9 @@
+"""
+utils
+=====
+
+Random utility classes/functions.
+"""
 
 
 class DotDict(dict):
