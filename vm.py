@@ -281,6 +281,8 @@ class VirtualMachine:
             self._writer.close()
             self._writer = None
             self._reader = None
+            return True
+        return False
 
     __del__ = close
 

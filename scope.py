@@ -43,8 +43,8 @@ class Scope(vm.VirtualMachine):
                 break
             else:
                 raise RuntimeError("No matching serial device found")
-        Log.info(f"Connecting to scope at {url}")
         self.close()
+        Log.info(f"Connecting to scope at {url}")
         parts = urlparse(url, scheme='file')
         if parts.scheme == 'file':
             self._reader = self._writer = streams.SerialStream(device=parts.path)
@@ -115,8 +115,8 @@ class Scope(vm.VirtualMachine):
         self.close()
 
     def close(self):
-        super().close()
-        Log.info("Closed scope")
+        if super().close():
+            Log.info("Closed scope")
 
     def calculate_lo_hi(self, low, high, params):
         if not isinstance(params, self.AnalogParams):
