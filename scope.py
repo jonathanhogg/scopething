@@ -72,8 +72,8 @@ class Scope(vm.VirtualMachine):
         await self.issue_get_revision()
         revision = ((await self.read_replies(2))[1]).decode('ascii')
         if revision == 'BS000501':
-            self.master_clock_rate = 40000000
-            self.master_clock_period = 1/self.master_clock_rate
+            self.primary_clock_rate = 40000000
+            self.primary_clock_period = 1/self.primary_clock_rate
             self.capture_buffer_size = 12 << 10
             self.awg_wavetable_size = 1024
             self.awg_sample_buffer_size = 1024
@@ -83,8 +83,8 @@ class Scope(vm.VirtualMachine):
             self.analog_params = {'x1':  self.AnalogParams(1.1, -.05, 0, 1.1, -.05, -.05, 18.333, -7.517, -5.5, 8, 0)}
             self.analog_lo_min = 0.07
             self.analog_hi_max = 0.88
-            self.timeout_clock_period = (1 << 8) * self.master_clock_period
-            self.timestamp_rollover = (1 << 32) * self.master_clock_period
+            self.timeout_clock_period = (1 << 8) * self.primary_clock_period
+            self.timestamp_rollover = (1 << 32) * self.primary_clock_period
         else:
             raise RuntimeError(f"Unsupported scope, revision: {revision}")
         self._awg_running = False
@@ -169,13 +169,13 @@ class Scope(vm.VirtualMachine):
         logic_enable = sum(1 << channel for channel in logic_channels)
 
         for capture_mode in vm.CaptureModes:
-            ticks = int(round(period / self.master_clock_period / nsamples))
+            ticks = int(round(period / self.primary_clock_period / nsamples))
             clock_scale = 1
             if capture_mode.analog_channels == len(analog_channels) and capture_mode.logic_channels == bool(logic_channels):
                 Log.debug(f"Considering trace mode {capture_mode.trace_mode.name}...")
                 if ticks > capture_mode.clock_high and capture_mode.clock_divide > 1:
-                    clock_scale = int(math.ceil(period / self.master_clock_period / nsamples / capture_mode.clock_high))
-                    ticks = int(round(period / self.master_clock_period / nsamples / clock_scale))
+                    clock_scale = int(math.ceil(period / self.primary_clock_period / nsamples / capture_mode.clock_high))
+                    ticks = int(round(period / self.primary_clock_period / nsamples / clock_scale))
                     if ticks in range(capture_mode.clock_low, capture_mode.clock_high+1):
                         Log.debug(f"- try with tick count {ticks} x {clock_scale}")
                     else:
@@ -187,7 +187,7 @@ class Scope(vm.VirtualMachine):
                 else:
                     Log.debug("- mode too slow")
                     continue
-                actual_nsamples = int(round(period / self.master_clock_period / ticks / clock_scale))
+                actual_nsamples = int(round(period / self.primary_clock_period / ticks / clock_scale))
                 if len(analog_channels) == 2:
                     actual_nsamples -= actual_nsamples % 2
                 buffer_width = self.capture_buffer_size // capture_mode.sample_width
@@ -200,7 +200,7 @@ class Scope(vm.VirtualMachine):
                 Log.debug(f"- insufficient buffer space for necessary {actual_nsamples} samples")
         else:
             raise ConfigurationError("Unable to find appropriate capture mode")
-        sample_period = ticks*clock_scale*self.master_clock_period
+        sample_period = ticks*clock_scale*self.primary_clock_period
         sample_rate = 1/sample_period
         if trigger_position and sample_rate > 5e6:
             Log.warning("Pre-trigger capture not supported above 5M samples/s; forcing trigger_position=0")
@@ -272,7 +272,7 @@ class Scope(vm.VirtualMachine):
         if timeout is None:
             trigger_timeout = 0
         else:
-            trigger_timeout = int(math.ceil(((trigger_intro+trigger_outro+trace_outro+2)*ticks*clock_scale*self.master_clock_period
+            trigger_timeout = int(math.ceil(((trigger_intro+trigger_outro+trace_outro+2)*ticks*clock_scale*self.primary_clock_period
                                              + timeout)/self.timeout_clock_period))
             if trigger_timeout > vm.Registers.Timeout.maximum_value:
                 if timeout > 0:
@@ -323,7 +323,7 @@ class Scope(vm.VirtualMachine):
             value_multiplier, value_offset = (1, 0) if raw else (high-low, low-analog_params.ab_offset/2*(1 if channel == 'A' else -1))
             data = await self.read_analog_samples(asamples, capture_mode.sample_width)
             series = DotDict({'channel': channel,
-                              'capture_start': start_timestamp * self.master_clock_period,
+                              'capture_start': start_timestamp * self.primary_clock_period,
                               'timestamps': timestamps[dump_channel::len(analog_channels)] if len(analog_channels) > 1 else timestamps,
                               'samples': array.array('f', (value*value_multiplier+value_offset for value in data)),
                               'sample_period': sample_period*len(analog_channels),
@@ -345,7 +345,7 @@ class Scope(vm.VirtualMachine):
                 mask = 1 << i
                 channel = f'L{i}'
                 series = DotDict({'channel': channel,
-                                  'capture_start': start_timestamp * self.master_clock_period,
+                                  'capture_start': start_timestamp * self.primary_clock_period,
                                   'timestamps': timestamps,
                                   'samples': array.array('B', (1 if value & mask else 0 for value in data)),
                                   'sample_period': sample_period,
@@ -368,14 +368,14 @@ class Scope(vm.VirtualMachine):
             raise ValueError(f"high out of range (0-{self.awg_maximum_voltage})")
         if low < 0 or low > high:
             raise ValueError("low out of range (0-high)")
-        max_clock = min(vm.Registers.Clock.maximum_value, int(math.floor(self.master_clock_rate / frequency / min_samples)))
-        min_clock = max(self.awg_minimum_clock, int(math.ceil(self.master_clock_rate / frequency / self.awg_sample_buffer_size)))
+        max_clock = min(vm.Registers.Clock.maximum_value, int(math.floor(self.primary_clock_rate / frequency / min_samples)))
+        min_clock = max(self.awg_minimum_clock, int(math.ceil(self.primary_clock_rate / frequency / self.awg_sample_buffer_size)))
         best_solution = None
         for clock in range(min_clock, max_clock+1):
-            width = self.master_clock_rate / frequency / clock
+            width = self.primary_clock_rate / frequency / clock
             nwaves = int(self.awg_sample_buffer_size / width)
             size = int(round(nwaves * width))
-            actualf = self.master_clock_rate * nwaves / size / clock
+            actualf = self.primary_clock_rate * nwaves / size / clock
             if actualf == frequency:
                 Log.debug(f"Exact solution: size={size} nwaves={nwaves} clock={clock}")
                 break
@@ -430,9 +430,9 @@ class Scope(vm.VirtualMachine):
     async def start_clock(self, frequency, ratio=0.5, max_error=1e-4):
         if self._awg_running:
             raise UsageError("Cannot start clock while waveform generator in use")
-        ticks = min(max(2, int(round(self.master_clock_rate / frequency))), vm.Registers.Clock.maximum_value)
+        ticks = min(max(2, int(round(self.primary_clock_rate / frequency))), vm.Registers.Clock.maximum_value)
         fall = min(max(1, int(round(ticks * ratio))), ticks-1)
-        actualf, actualr = self.master_clock_rate / ticks, fall / ticks
+        actualf, actualr = self.primary_clock_rate / ticks, fall / ticks
         if abs(actualf - frequency) / frequency > max_error:
             raise ConfigurationError("No solution to required frequency and max_error")
         async with self.transaction():
