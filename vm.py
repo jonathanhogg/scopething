@@ -6,7 +6,7 @@ Package capturing BitScope VM specification, including registers, enumerations, 
 commands and logic for encoding and decoding virtual machine instructions and data.
 
 All names and descriptions copyright BitScope and taken from their [VM specification
-document][VM01B].
+document][VM01B] (with slight changes).
 
 [VM01B]: https://docs.google.com/document/d/1cZNRpSPAMyIyAvIk_mqgEByaaHzbFTX8hWglAMTlnHY
 
@@ -90,8 +90,8 @@ Registers = DotDict({
     "TriggerOutro": Register(0x34, 'U16', "Edge trigger outro filter counter (samples/2)"),
     "TriggerValue": Register(0x44, 'S0.16', "Digital (comparator) trigger (signed)"),
     "TriggerTime": Register(0x40, 'U32', "Stopwatch trigger time (ticks)"),
-    "ClockTicks": Register(0x2e, 'U16', "Master Sample (clock) period (ticks)"),
-    "ClockScale": Register(0x14, 'U16', "Clock divide by N (low byte)"),
+    "ClockTicks": Register(0x2e, 'U16', "Sample period (ticks)"),
+    "ClockScale": Register(0x14, 'U16', "Sample clock divider"),
     "TraceOption": Register(0x20, 'U8', "Trace Mode Option bits"),
     "TraceMode": Register(0x21, 'U8', "Trace Mode (see Trace Mode Table)"),
     "TraceIntro": Register(0x26, 'U16', "Pre-trigger capture count (samples)"),
@@ -151,8 +151,8 @@ Registers = DotDict({
     "Map5": Register(0x99, 'U8', "Peripheral Pin Select Channel 5"),
     "Map6": Register(0x9a, 'U8', "Peripheral Pin Select Channel 6"),
     "Map7": Register(0x9b, 'U8', "Peripheral Pin Select Channel 7"),
-    "MasterClockN": Register(0xf7, 'U8', "PLL prescale (DIV N)"),
-    "MasterClockM": Register(0xf8, 'U16', "PLL multiplier (MUL M)"),
+    "PrimaryClockN": Register(0xf7, 'U8', "PLL prescale (DIV N)"),
+    "PrimaryClockM": Register(0xf8, 'U16', "PLL multiplier (MUL M)"),
 })
 
 
