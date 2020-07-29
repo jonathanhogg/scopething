@@ -174,9 +174,11 @@ class Scope(vm.VirtualMachine):
             if capture_mode.analog_channels == len(analog_channels) and capture_mode.logic_channels == bool(logic_channels):
                 Log.debug(f"Considering trace mode {capture_mode.trace_mode.name}...")
                 if ticks > capture_mode.clock_high and capture_mode.clock_divide > 1:
-                    clock_scale = int(math.ceil(period / self.primary_clock_period / nsamples / capture_mode.clock_high))
+                    clock_scale = min(capture_mode.clock_divide, int(math.ceil(period / self.primary_clock_period / nsamples / capture_mode.clock_high)))
                     ticks = int(round(period / self.primary_clock_period / nsamples / clock_scale))
-                    if ticks in range(capture_mode.clock_low, capture_mode.clock_high+1):
+                    if ticks > capture_mode.clock_low:
+                        if ticks > capture_mode.clock_high:
+                            ticks = capture_mode.clock_high
                         Log.debug(f"- try with tick count {ticks} x {clock_scale}")
                     else:
                         continue
