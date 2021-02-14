@@ -24,7 +24,7 @@ class SerialStream:
     @classmethod
     def devices_matching(cls, vid=None, pid=None, serial_number=None):
         for port in comports():
-            if (vid is None or vid == port.vid) and (pid is None or pid == port.pid) and (serial is None or serial_number == port.serial_number):
+            if (vid is None or vid == port.vid) and (pid is None or pid == port.pid) and (serial_number is None or serial_number == port.serial_number):
                 yield port.device
 
     @classmethod
