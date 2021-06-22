@@ -236,15 +236,7 @@ class Scope(vm.VirtualMachine):
         if trigger_level is None:
             trigger_level = (high + low) / 2
         analog_trigger_level = (trigger_level - analog_params.offset) / analog_params.scale if not raw else trigger_level
-        if trigger in {'A', 'B'}:
-            if trigger == 'A':
-                spock_option |= vm.SpockOption.TriggerSourceA
-                trigger_logic = 0x80
-            elif trigger == 'B':
-                spock_option |= vm.SpockOption.TriggerSourceB
-                trigger_logic = 0x40
-            trigger_mask = 0xff ^ trigger_logic
-        elif isinstance(trigger, dict):
+        if isinstance(trigger, dict):
             trigger_logic = 0
             trigger_mask = 0xff
             for channel, value in trigger.items():
@@ -259,6 +251,14 @@ class Scope(vm.VirtualMachine):
                 trigger_mask &= ~mask
                 if value:
                     trigger_logic |= mask
+        elif trigger in {'A', 'B'}:
+            if trigger == 'A':
+                spock_option |= vm.SpockOption.TriggerSourceA
+                trigger_logic = 0x80
+            elif trigger == 'B':
+                spock_option |= vm.SpockOption.TriggerSourceB
+                trigger_logic = 0x40
+            trigger_mask = 0xff ^ trigger_logic
         else:
             raise ValueError("Unrecognised trigger value")
         trigger_type = trigger_type.lower()
@@ -357,7 +357,7 @@ class Scope(vm.VirtualMachine):
                     series.trigger_timestamp = series.timestamps[trigger_samples]
                     series.trigger_level = trigger[i]
                     series.trigger_type = trigger_type
-            traces[channel] = series
+                traces[channel] = series
         Log.info(f"{nsamples} samples captured on {cause}, traces: {', '.join(traces)}")
         return traces
 
