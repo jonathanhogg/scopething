@@ -60,6 +60,9 @@ class Scope(vm.VirtualMachine):
         elif parts.scheme == 'socket':
             host, port = parts.netloc.split(':', 1)
             self._reader, self._writer = await asyncio.open_connection(host, int(port))
+        elif parts.scheme == "bitscope-server":
+            host, port = parts.netloc.split(':', 1)
+            self._reader = self._writer = await streams.UDPBitscope.create(host, int(port))
         else:
             raise ValueError(f"Don't know what to do with url: {url}")
         self.url = url
@@ -91,6 +94,10 @@ class Scope(vm.VirtualMachine):
         self._clock_running = False
         self.load_analog_params()
         Log.info(f"Initialised scope, revision: {revision}")
+
+        # get serial number stocked in EEPROM
+        self.serial_number = await self.issue_get_serial_number()
+        Log.info(f"Initialised scope, serial number: {self.serial_number}")
 
     def load_analog_params(self):
         config = ConfigParser()

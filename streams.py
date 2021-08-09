@@ -2,12 +2,16 @@
 streams
 =======
 
-Package for asynchronous serial IO.
+Package for asynchronous serial IO and UDP as asyncio API
+Serial IO : added by Original Author
+UDP : added by Luc MASSON
+
 """
 
 # pylama:ignore=W1203,R0916,W0703
 
 import asyncio
+import asyncio.transports as transports
 import logging
 import sys
 import threading
@@ -139,3 +143,135 @@ class SerialStream:
         while len(data) < nbytes:
             data += await self.read(nbytes-len(data))
         return data
+
+
+class UDPBitscope:
+
+    class UDPProtocol(asyncio.Protocol):
+
+        def __init__(self):
+            print("creating UDPTransport...")
+            self.transport = None
+
+            # link between callback and asyncio
+            self.msg_received = None
+            self.datagram_buffer = None        # buffer of received data
+
+        # BaseProtocol
+        def connection_made(self, transport: transports.BaseTransport) -> None:
+            self.transport = transport
+
+        # Base Protocol
+        # def connection_lost(self, exc):
+        #     pass
+
+        # Datagram.Protocol
+        def error_received(self, exec):
+            print("Error received (?!)")
+
+        # Datagram.Protocol
+        def datagram_received(self, data, addr):
+            """ callback when data is received from UDP connection """
+            Log.debug(f"reçu ({addr}): {data}")
+            self.datagram_buffer = data
+            # update concurrent tasks
+            self.msg_received.set()
+
+    @classmethod
+    async def create(cls, host, port):
+        # initiate connection
+        loop = asyncio.get_running_loop()
+        transport, protocol = await loop.create_datagram_endpoint(cls.UDPProtocol, remote_addr=(host, port))
+        return UDPBitscope(transport, protocol)
+
+    def __init__(self, transport, protocol):
+        # initiate connection
+        self.transport, self.protocol = transport, protocol
+        Log.debug(f"Opened bitscope connection to UDP:{transport._address[0]}:{transport._address[1]}")
+
+        # link between data_received callback and asyncio
+        self.msg_received = asyncio.Event()
+        self.protocol.msg_received = self.msg_received
+        self.data_buffer = None
+
+        # bitscope-server counter
+        self.cmd_counter = 0
+
+    def __repr__(self):
+        return f'<{self.__class__.__name__}:{self.transport}>'
+
+    def close(self):
+        self.transport.close()
+        self.transport = None
+        self.protocol = None
+
+    def write(self, data: bytes):
+        """
+        Send commands to bitscope-server
+        structure of datagram =
+            1 byte = cmd number
+            X bytes = cmd_id and eventually data (handled by vm implementation)
+        """
+        # add nb of sended cmd to the data
+        msg = bytes([self.cmd_counter]) + data
+
+        # send data
+        self.transport.sendto(msg)       # This method does not block; it buffers the data and arranges for it to be sent out asynchronously.
+
+        # increment cmd_counter (limit 1 byte --> 0 to 255)
+        self.cmd_counter += 1
+        if self.cmd_counter > 255:
+            self.cmd_counter = 0
+
+    async def drain(self):
+        # useless for Datagram Transport (I suppose)
+        pass
+
+    async def read(self, nbytes=None):
+        if self.data_buffer:
+            # on garde que les nbytes et on stock le reste (ou on envoie tout)
+            if nbytes:
+                split_index = nbytes
+            else:
+                split_index = len(self.data_buffer)
+            returned_data = self.data_buffer[:split_index]
+            store_data = self.data_buffer[split_index:]
+            if store_data:
+                self.data_buffer = store_data
+            else:
+                self.data_buffer = None
+
+        else:
+            # We need to wait for the callback
+            await self.msg_received.wait()
+
+            # Ok, callback has fired, data has been received
+            # retrieve it
+            raw_data = self.protocol.datagram_buffer
+
+            # reset event and clear data_buffer
+            self.protocol.datagram_buffer = None
+            self.msg_received.clear()
+
+            # Now remove the 4 bytes of header from bitscope-server
+            data = raw_data[4:]
+
+            # keep only first nbytes (and store the rest) or all
+            if nbytes:
+                split_index = nbytes
+            else:
+                split_index = len(data)
+            returned_data = data[:split_index]
+            store_data = data[split_index:]
+            if store_data:
+                self.data_buffer = store_data
+
+        return returned_data
+
+    async def readexactly(self, nbytes):
+        # call read with amount of bytes requested
+        data_buffer = b''
+        while len(data_buffer) < nbytes:
+            data_buffer += await self.read(nbytes-len(data_buffer))
+
+        return data_buffer

@@ -63,3 +63,16 @@ I'm sticking to it.
 "A foolish consistency is the hobgoblin of little minds"
 
 Also, I haven't used an 80 character wide terminal in this century.
+
+### connection scheme
+
+Options for launching the scope to connect to different device location
+
+None
+--> looks for local / USB bitscope
+
+socket:///dev/ttyUSB0
+--> specify which device to use (for example if you have several bitscopes connected)
+
+bitscope-server://192.168.20.25:15500
+--> bitscope is behind a bitscope-server located on ip:port
