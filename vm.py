@@ -273,6 +273,7 @@ class VirtualMachine:
         self._writer = writer
         self._transactions = []
         self._reply_buffer = b''
+        self.serial_number = ""
 
     def close(self):
         if self._writer is not None:
@@ -369,6 +370,30 @@ class VirtualMachine:
 
     async def issue_capture_spock_registers(self):
         await self.issue(b'<')
+
+    async def issue_get_serial_number(self):
+        """
+        Get serial number stocked in bitscope EEPROM
+        read from (R17) register, one byte by one byte
+        """
+        cmds = [
+            b'[11]@[30]sr',
+            b'[11]@[31]sr',
+            b'[11]@[32]sr',
+            b'[11]@[33]sr',
+            b'[11]@[34]sr',
+            b'[11]@[35]sr',
+            b'[11]@[36]sr',
+            b'[11]@[37]sr',
+        ]
+        serial_number = ""
+
+        for cmd in cmds:
+            await self.issue(cmd)
+            result = await self.read_replies(2)
+            serial_number += bytes([int(result[1], 16)]).decode("ascii")
+
+        return serial_number
 
     async def issue_program_spock_registers(self):
         await self.issue(b'>')
